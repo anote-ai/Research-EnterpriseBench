@@ -1,14 +1,13 @@
 from __future__ import annotations
 import math
 from dataclasses import dataclass
-from typing import Any
 from .core import BenchmarkTask, TaskResult, EvaluationDimension
 
 
 @dataclass
 class DimensionScore:
     dimension: EvaluationDimension
-    score: float  # 0..1
+    score: float
     details: dict
 
 
@@ -65,7 +64,6 @@ def evaluate_result(result: TaskResult, task: BenchmarkTask) -> dict[str, Dimens
 
 
 def leaderboard(agent_results: dict[str, list[float]]) -> list[dict]:
-    """agent_results: {agent_name: [syntactic_scores]}. Returns sorted leaderboard."""
     rows = []
     for agent, scores in agent_results.items():
         agg = aggregate_scores(scores)

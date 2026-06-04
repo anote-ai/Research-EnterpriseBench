@@ -2,7 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
-import time, uuid
+import time
 
 
 class EvaluationDimension(str, Enum):
@@ -58,7 +58,6 @@ class BenchmarkSuite:
         return [t for t in self.tasks if t.difficulty == difficulty]
 
     def run_agent(self, agent_fn, task: BenchmarkTask) -> TaskResult:
-        """Call agent_fn(task) -> dict with keys: call, output, cost_usd"""
         start = time.perf_counter()
         result = agent_fn(task)
         latency_ms = (time.perf_counter() - start) * 1000
