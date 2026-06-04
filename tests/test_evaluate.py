@@ -9,6 +9,8 @@ from enterprisebench.evaluate import (
     score_cost,
     aggregate_scores,
     pareto_frontier,
+    task_complexity_score,
+    agent_leaderboard,
 )
 
 
@@ -32,7 +34,6 @@ def test_score_syntactic_empty_dicts():
 
 
 def test_score_syntactic_includes_value_jaccard():
-    """Value Jaccard is included; partial match should be intermediate."""
     pred = {"name": "get_stock_price", "arguments": {"ticker": "AAPL", "date": "wrong-date"}}
     exp = {"name": "get_stock_price", "arguments": {"ticker": "AAPL", "date": "2024-01-01"}}
     result = score_syntactic(pred, exp)
@@ -56,7 +57,6 @@ def test_score_semantic_perfect_match():
 
 
 def test_score_semantic_fuzzy_value_tolerance():
-    """Slight variation in value format should still score reasonably well."""
     pred = {"name": "get_stock_price", "arguments": {"ticker": "aapl", "date": "2024-01-01"}}
     exp = {"name": "get_stock_price", "arguments": {"ticker": "AAPL", "date": "2024-01-01"}}
     result = score_semantic(pred, exp)
@@ -111,3 +111,21 @@ def test_pareto_frontier():
     frontier = pareto_frontier(points)
     assert len(frontier) >= 1
     assert frontier[0]["cost"] == 0.1
+
+
+def test_task_complexity_simple():
+    score = task_complexity_score(n_required_tools=1, n_dependencies=0, has_conditional=False)
+    assert 0.0 <= score <= 1.0
+    assert score < 0.3
+
+
+def test_task_complexity_complex():
+    score = task_complexity_score(n_required_tools=5, n_dependencies=4, has_conditional=True)
+    assert score > 0.7
+
+
+def test_agent_leaderboard_sorted():
+    results = {"agent_a": [0.9, 0.8], "agent_b": [0.4, 0.5]}
+    board = agent_leaderboard(results)
+    assert board[0]["agent"] == "agent_a"
+    assert board[0]["mean"] > board[1]["mean"]
