@@ -20,7 +20,7 @@ def _value_jaccard(pred_args: dict, exp_args: dict) -> float:
 
 
 def _fuzzy_token_overlap(a: str, b: str) -> float:
-    """Token-level Jaccard between two strings (lowercased, split on whitespace/punctuation)."""
+    """Token-level Jaccard between two strings."""
     import re
     tokens_a = set(re.split(r"[\s,._\-]+", a.lower())) - {""}
     tokens_b = set(re.split(r"[\s,._\-]+", b.lower())) - {""}
@@ -40,7 +40,6 @@ def score_syntactic(predicted_call: dict, expected_call: dict) -> DimensionScore
     union = exp_keys | pred_keys
     key_score = len(pred_keys & exp_keys) / len(union) if union else 1.0
     val_score = _value_jaccard(pred_args, exp_args)
-    # weights: name 0.4, key Jaccard 0.35, value Jaccard 0.25
     score = 0.4 * name_match + 0.35 * key_score + 0.25 * val_score
     return DimensionScore(
         EvaluationDimension.SYNTACTIC,
@@ -55,12 +54,7 @@ def score_semantic(
     *,
     instruction: str = "",
 ) -> DimensionScore:
-    """Fuzzy semantic scoring using token-overlap on argument values and tool name.
-
-    Compared to syntactic scoring this is more tolerant of minor value
-    differences (e.g. "Q1-2024" vs "Q1 2024") and considers the instruction
-    text when it is provided.
-    """
+    """Fuzzy semantic scoring using token-overlap on argument values and tool name."""
     if not predicted_call or not expected_call:
         return DimensionScore(EvaluationDimension.SEMANTIC, 0.0, {"reason": "empty call"})
 
@@ -71,7 +65,6 @@ def score_semantic(
     pred_args = predicted_call.get("arguments", {})
     exp_args = expected_call.get("arguments", {})
 
-    # Per-key fuzzy value match averaged over expected keys
     if exp_args:
         key_sims = []
         for k, exp_val in exp_args.items():
@@ -81,7 +74,6 @@ def score_semantic(
     else:
         arg_sim = 1.0
 
-    # Optional instruction alignment boost (up to 0.1)
     instruction_boost = 0.0
     if instruction and pred_name:
         instruction_boost = 0.1 * _fuzzy_token_overlap(instruction, pred_name)
@@ -156,3 +148,31 @@ def pareto_frontier(
             frontier.append(pt)
             best_y = pt[y_key]
     return frontier
+
+
+def task_complexity_score(
+    n_required_tools: int, n_dependencies: int, has_conditional: bool
+) -> float:
+    """Heuristic complexity score in [0, 1] for a benchmark task."""
+    tool_factor = min(n_required_tools / 5.0, 1.0)
+    dep_factor = min(n_dependencies / 4.0, 1.0)
+    branch_factor = 0.2 if has_conditional else 0.0
+    raw = 0.4 * tool_factor + 0.4 * dep_factor + 0.2 * branch_factor
+    return min(raw + branch_factor * 0.1, 1.0)
+
+
+def agent_leaderboard(
+    agent_results: dict[str, list[float]],
+    weights: dict[str, float] | None = None,
+) -> list[dict]:
+    """Rank agents by weighted mean score across evaluation dimensions."""
+    if weights is None:
+        weights = {}
+    rows = []
+    for agent, scores in agent_results.items():
+        if not scores:
+            continue
+        stats = aggregate_scores(scores)
+        rows.append({"agent": agent, **stats})
+    rows.sort(key=lambda x: x["mean"], reverse=True)
+    return rows
