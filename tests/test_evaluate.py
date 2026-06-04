@@ -1,5 +1,5 @@
-import pytest
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from enterprisebench.evaluate import (
@@ -52,6 +52,5 @@ def test_pareto_frontier():
         {"cost": 0.3, "score": 0.95},
     ]
     frontier = pareto_frontier(points)
-    # First point dominates second; third has higher score despite higher cost
     assert len(frontier) >= 1
     assert frontier[0]["cost"] == 0.1

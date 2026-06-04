@@ -1,11 +1,12 @@
 import pytest
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from enterprisebench.core import (
     BenchmarkTask, BenchmarkSuite, TaskResult, EvaluationDimension, VERTICALS
 )
-from enterprisebench.data import make_task, make_suite
+from enterprisebench.data import make_suite
 
 
 def _simple_task():
@@ -60,7 +61,10 @@ def test_run_agent_with_lambda():
     suite = BenchmarkSuite()
     task = _simple_task()
     suite.add_task(task)
-    agent = lambda t: {"call": t.expected_call, "output": "ok", "cost_usd": 0.001, "agent_name": "test"}
+
+    def agent(t):
+        return {"call": t.expected_call, "output": "ok", "cost_usd": 0.001, "agent_name": "test"}
+
     result = suite.run_agent(agent, task)
     assert isinstance(result, TaskResult)
     assert result.task_id == "t001"
