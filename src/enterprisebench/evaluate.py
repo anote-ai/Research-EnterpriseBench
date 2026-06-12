@@ -86,7 +86,7 @@ def score_semantic(
 
 
 def score_latency(latency_ms: float, budget_ms: float = 2000.0) -> DimensionScore:
-    """Score latency: 1.0 at 0 ms, 0.0 beyond 2× budget."""
+    """Score latency: 1.0 at 0 ms, 0.0 beyond 2x budget."""
     if budget_ms <= 0:
         return DimensionScore(EvaluationDimension.LATENCY, 0.0, {})
     score = max(0.0, 1.0 - latency_ms / (2.0 * budget_ms))
@@ -115,7 +115,7 @@ def pareto_frontier(points: list[dict]) -> list[dict]:
     """Return Pareto-optimal points (minimize cost, maximize score)."""
     if not points:
         return []
-    frontier = []
+    frontier: list[dict] = []
     for p in sorted(points, key=lambda x: x["cost"]):
         if not frontier or p["score"] > frontier[-1]["score"]:
             frontier.append(p)
@@ -123,11 +123,7 @@ def pareto_frontier(points: list[dict]) -> list[dict]:
 
 
 def task_complexity_score(n_required_tools: int, n_dependencies: int, has_conditional: bool) -> float:
-    """Heuristic complexity score in [0, 1] for a benchmark task.
-
-    Considers how many tools must be chained, how many inter-call dependencies
-    exist, and whether the task requires conditional branching.
-    """
+    """Heuristic complexity score in [0, 1] for a benchmark task."""
     tool_factor = min(n_required_tools / 5.0, 1.0)
     dep_factor = min(n_dependencies / 4.0, 1.0)
     branch_factor = 0.2 if has_conditional else 0.0
@@ -139,12 +135,7 @@ def agent_leaderboard(
     agent_results: dict[str, list[float]],
     weights: Optional[dict[str, float]] = None,
 ) -> list[dict]:
-    """Rank agents by weighted mean score across evaluation dimensions.
-
-    agent_results maps agent name to list of per-task scores.
-    weights maps dimension names to floats (default uniform).
-    Returns list of dicts sorted by weighted_mean descending.
-    """
+    """Rank agents by weighted mean score across evaluation dimensions."""
     if weights is None:
         weights = {}
     rows = []

@@ -1,14 +1,14 @@
 """EnterpriseBench: Evaluating SLM tool-calling under enterprise deployment conditions."""
 
 from .core import BenchmarkTask, BenchmarkSuite, EvaluationDimension, VERTICALS
-from .evaluate import SyntacticScore, score_syntactic, score_semantic, aggregate_scores, pareto_frontier
+from .evaluate import DimensionScore, score_syntactic, score_semantic, aggregate_scores, pareto_frontier
 
 __all__ = [
     "BenchmarkTask",
     "BenchmarkSuite",
     "EvaluationDimension",
     "VERTICALS",
-    "SyntacticScore",
+    "DimensionScore",
     "score_syntactic",
     "score_semantic",
     "aggregate_scores",
