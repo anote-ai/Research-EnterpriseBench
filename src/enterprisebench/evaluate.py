@@ -117,12 +117,37 @@ def aggregate_scores(scores: list[float]) -> dict:
     return {"mean": mean, "std": std, "min": min(scores), "max": max(scores), "n": n}
 
 
+def score_reliability(
+    predicted_calls: list[dict],
+    expected_calls: list[dict],
+) -> DimensionScore:
+    """Fraction of runs where the tool name was called correctly (consistency).
+
+    Pass a list of predicted calls from repeated runs against the same task to
+    measure how reliably an agent picks the right tool.  A single-element list
+    is valid and returns 1.0 when the name matches, 0.0 otherwise.
+    """
+    if not expected_calls or not predicted_calls:
+        return DimensionScore(EvaluationDimension.RELIABILITY, 0.0, {"reason": "empty calls"})
+    expected_name = expected_calls[0].get("name", "")
+    hits = sum(
+        1 for p in predicted_calls if p.get("name", "") == expected_name
+    )
+    score = hits / len(predicted_calls)
+    return DimensionScore(
+        EvaluationDimension.RELIABILITY,
+        score,
+        {"hits": hits, "total": len(predicted_calls), "expected_name": expected_name},
+    )
+
+
 def evaluate_result(result: TaskResult, task: BenchmarkTask) -> dict[str, DimensionScore]:
     return {
         "syntactic": score_syntactic(result.predicted_call, task.expected_call),
         "semantic": score_semantic(
             result.predicted_call, task.expected_call, instruction=task.instruction
         ),
+        "reliability": score_reliability([result.predicted_call], [task.expected_call]),
         "latency": score_latency(result.latency_ms),
         "cost": score_cost(result.cost_usd),
     }

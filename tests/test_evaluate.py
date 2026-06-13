@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from enterprisebench.evaluate import (
     score_syntactic,
     score_semantic,
+    score_reliability,
     score_latency,
     score_cost,
     aggregate_scores,
@@ -129,3 +130,45 @@ def test_agent_leaderboard_sorted():
     board = agent_leaderboard(results)
     assert board[0]["agent"] == "agent_a"
     assert board[0]["mean"] > board[1]["mean"]
+
+
+def test_score_reliability_perfect():
+    calls = [{"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}] * 5
+    expected = [{"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}]
+    result = score_reliability(calls, expected)
+    assert result.score == 1.0
+    assert result.details["hits"] == 5
+
+
+def test_score_reliability_partial():
+    predicted = [
+        {"name": "get_stock_price"},
+        {"name": "wrong_tool"},
+        {"name": "get_stock_price"},
+        {"name": "get_stock_price"},
+    ]
+    expected = [{"name": "get_stock_price"}]
+    result = score_reliability(predicted, expected)
+    assert abs(result.score - 0.75) < 1e-9
+    assert result.details["total"] == 4
+
+
+def test_score_reliability_zero():
+    predicted = [{"name": "wrong_tool"}, {"name": "also_wrong"}]
+    expected = [{"name": "get_stock_price"}]
+    result = score_reliability(predicted, expected)
+    assert result.score == 0.0
+
+
+def test_score_reliability_empty_inputs():
+    result = score_reliability([], [])
+    assert result.score == 0.0
+    assert "reason" in result.details
+
+
+def test_score_reliability_single_hit():
+    pred = [{"name": "lookup_patient_record"}]
+    exp = [{"name": "lookup_patient_record"}]
+    result = score_reliability(pred, exp)
+    assert result.score == 1.0
+    assert result.details["expected_name"] == "lookup_patient_record"
