@@ -186,18 +186,35 @@ def task_complexity_score(
     return min(raw + branch_factor * 0.1, 1.0)
 
 
+DIMENSION_ORDER = ["syntactic", "semantic", "reliability", "cost", "latency"]
+
+
 def agent_leaderboard(
     agent_results: dict[str, list[float]],
     weights: dict[str, float] | None = None,
 ) -> list[dict]:
-    """Rank agents by weighted mean score across evaluation dimensions."""
-    if weights is None:
-        weights = {}
+    """Rank agents by weighted mean score across evaluation dimensions.
+
+    Each scores list should contain one entry per dimension in DIMENSION_ORDER.
+    weights maps dimension names to relative importance; values are normalized internally.
+    Unweighted mean is used when weights is None.
+    """
+    pos_weights: list[float] | None = None
+    if weights:
+        raw = [weights.get(d, 1.0) for d in DIMENSION_ORDER]
+        total = sum(raw)
+        pos_weights = [w / total for w in raw]
+
     rows = []
     for agent, scores in agent_results.items():
         if not scores:
             continue
         stats = aggregate_scores(scores)
+        if pos_weights:
+            n = len(scores)
+            w = pos_weights[:n]
+            w_sum = sum(w)
+            stats["mean"] = sum(s * wi for s, wi in zip(scores, w)) / w_sum
         rows.append({"agent": agent, **stats})
     rows.sort(key=lambda x: x["mean"], reverse=True)
     return rows
