@@ -22,15 +22,17 @@ def main():
     suite = BenchmarkSuite(tasks=make_suite(20))
     print(f"Suite stats: {suite.stats()}")
 
-    all_syntactic = []
+    dim_scores: dict[str, list[float]] = {d: [] for d in ["syntactic", "semantic", "reliability", "cost", "latency"]}
     for task in suite.tasks:
         result = suite.run_agent(mock_agent, task)
         scores = evaluate_result(result, task)
-        all_syntactic.append(scores["syntactic"].score)
+        for dim, ds in scores.items():
+            dim_scores[dim].append(ds.score)
 
-    agg = aggregate_scores(all_syntactic)
-    print(f"Syntactic scores: mean={agg['mean']:.3f} std={agg['std']:.3f}")
-    board = leaderboard({"mock-agent": all_syntactic})
+    for dim, vals in dim_scores.items():
+        agg = aggregate_scores(vals)
+        print(f"{dim:12s}: mean={agg['mean']:.3f}  std={agg['std']:.3f}")
+    board = leaderboard({"mock-agent": dim_scores["syntactic"]})
     print("Leaderboard:", board)
 
 
