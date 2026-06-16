@@ -132,6 +132,15 @@ def test_agent_leaderboard_sorted():
     assert board[0]["mean"] > board[1]["mean"]
 
 
+def test_agent_leaderboard_weights_change_ranking():
+    # agent_a: strong syntactic, weak semantic; agent_b: the reverse
+    results = {"agent_a": [0.9, 0.2], "agent_b": [0.2, 0.9]}
+    board = agent_leaderboard(results, weights={"syntactic": 0.1, "semantic": 0.9})
+    assert board[0]["agent"] == "agent_b"
+    board = agent_leaderboard(results, weights={"syntactic": 0.9, "semantic": 0.1})
+    assert board[0]["agent"] == "agent_a"
+
+
 def test_score_reliability_perfect():
     calls = [{"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}] * 5
     expected = [{"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}]
