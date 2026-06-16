@@ -100,3 +100,16 @@ def test_evaluation_dimension_values():
     assert EvaluationDimension.COST == "cost"
     assert EvaluationDimension.SEMANTIC == "semantic"
     assert EvaluationDimension.RELIABILITY == "reliability"
+
+
+def test_run_agent_multi_turn():
+    from enterprisebench.data import make_multi_turn_task
+    suite = BenchmarkSuite()
+    task = make_multi_turn_task(vertical="finance")
+
+    def agent(_payload):
+        return {"call": {"name": "get_stock_price", "arguments": {}}, "output": "ok"}
+
+    results = suite.run_agent_multi_turn(agent, task)
+    assert len(results) == len(task.turns)
+    assert all(r.predicted_output == "ok" for r in results)
