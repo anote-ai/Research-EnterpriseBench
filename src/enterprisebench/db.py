@@ -22,49 +22,54 @@ from .evaluate import DimensionScore
 
 _DEFAULT_DB = Path(__file__).parent.parent.parent / "data" / "enterprisebench.duckdb"
 
-_DDL = """
-CREATE TABLE IF NOT EXISTS benchmark_tasks (
-    task_id       VARCHAR PRIMARY KEY,
-    vertical      VARCHAR NOT NULL,
-    instruction   TEXT    NOT NULL,
-    tool_schema   JSON    NOT NULL,
-    expected_call JSON    NOT NULL,
-    expected_output TEXT  NOT NULL,
-    difficulty    VARCHAR NOT NULL,
-    turns         JSON    NOT NULL,
-    is_multi_turn BOOLEAN NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS experiment_runs (
-    run_id      VARCHAR   PRIMARY KEY,
-    agent_name  VARCHAR   NOT NULL,
-    seed        INTEGER,
-    n_tasks     INTEGER   NOT NULL,
-    created_at  TIMESTAMP NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS task_results (
-    run_id          VARCHAR   NOT NULL,
-    task_id         VARCHAR   NOT NULL,
-    vertical        VARCHAR   NOT NULL,
-    agent_name      VARCHAR   NOT NULL,
-    predicted_call  JSON      NOT NULL,
-    predicted_output TEXT     NOT NULL,
-    latency_ms      DOUBLE    NOT NULL,
-    cost_usd        DOUBLE    NOT NULL,
-    created_at      TIMESTAMP NOT NULL,
-    PRIMARY KEY (run_id, task_id)
-);
-
-CREATE TABLE IF NOT EXISTS dimension_scores (
-    run_id    VARCHAR NOT NULL,
-    task_id   VARCHAR NOT NULL,
-    dimension VARCHAR NOT NULL,
-    score     DOUBLE  NOT NULL,
-    details   JSON    NOT NULL,
-    PRIMARY KEY (run_id, task_id, dimension)
-);
-"""
+_DDL_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS benchmark_tasks (
+        task_id       VARCHAR PRIMARY KEY,
+        vertical      VARCHAR NOT NULL,
+        instruction   TEXT    NOT NULL,
+        tool_schema   JSON    NOT NULL,
+        expected_call JSON    NOT NULL,
+        expected_output TEXT  NOT NULL,
+        difficulty    VARCHAR NOT NULL,
+        turns         JSON    NOT NULL,
+        is_multi_turn BOOLEAN NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS experiment_runs (
+        run_id      VARCHAR   PRIMARY KEY,
+        agent_name  VARCHAR   NOT NULL,
+        seed        INTEGER,
+        n_tasks     INTEGER   NOT NULL,
+        created_at  TIMESTAMP NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS task_results (
+        run_id          VARCHAR   NOT NULL,
+        task_id         VARCHAR   NOT NULL,
+        vertical        VARCHAR   NOT NULL,
+        agent_name      VARCHAR   NOT NULL,
+        predicted_call  JSON      NOT NULL,
+        predicted_output TEXT     NOT NULL,
+        latency_ms      DOUBLE    NOT NULL,
+        cost_usd        DOUBLE    NOT NULL,
+        created_at      TIMESTAMP NOT NULL,
+        PRIMARY KEY (run_id, task_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS dimension_scores (
+        run_id    VARCHAR NOT NULL,
+        task_id   VARCHAR NOT NULL,
+        dimension VARCHAR NOT NULL,
+        score     DOUBLE  NOT NULL,
+        details   JSON    NOT NULL,
+        PRIMARY KEY (run_id, task_id, dimension)
+    )
+    """,
+]
 
 
 def init_db(path: str | Path = _DEFAULT_DB) -> duckdb.DuckDBPyConnection:
@@ -72,7 +77,8 @@ def init_db(path: str | Path = _DEFAULT_DB) -> duckdb.DuckDBPyConnection:
     db_path = Path(path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = duckdb.connect(str(db_path))
-    conn.executescript(_DDL)
+    for stmt in _DDL_STATEMENTS:
+        conn.execute(stmt)
     return conn
 
 
