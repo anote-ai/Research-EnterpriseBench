@@ -31,7 +31,8 @@ def main():
     save_tasks(conn, suite.tasks)
     save_run(conn, run_id, agent_name="mock-agent", n_tasks=len(suite.tasks), seed=SEED)
 
-    dim_scores: dict[str, list[float]] = {d: [] for d in ["syntactic", "semantic", "reliability", "cost", "latency"]}
+    all_dims = ["syntactic", "semantic", "reliability", "cost", "latency", "false_completion"]
+    dim_scores: dict[str, list[float]] = {d: [] for d in all_dims}
     for task in suite.tasks:
         result = suite.run_agent(mock_agent, task)
         scores = evaluate_result(result, task)
@@ -42,11 +43,17 @@ def main():
     print(f"\nRun ID: {run_id}")
     print("\n--- Per-dimension summary (from DB) ---")
     for row in load_run_summary(conn, run_id):
-        print(f"  {row['dimension']:12s}: mean={row['mean']:.3f}  std={row['std']:.3f}  n={row['n']}")
+        print(f"  {row['dimension']:16s}: mean={row['mean']:.3f}  std={row['std']:.3f}  n={row['n']}")
+
+    fc_scores = dim_scores.get("false_completion", [])
+    if fc_scores:
+        fcr = 1.0 - (sum(fc_scores) / len(fc_scores))
+        print(f"\n  False Completion Rate (FCR): {fcr:.1%}  "
+              f"({int(fcr * len(fc_scores))}/{len(fc_scores)} tasks falsely completed)")
 
     print("\n--- Leaderboard (all runs, from DB) ---")
     for row in load_leaderboard(conn):
-        print(f"  {row['agent_name']:20s}  {row['dimension']:12s}  mean={row['mean']:.3f}  n={row['n_tasks']}")
+        print(f"  {row['agent_name']:20s}  {row['dimension']:16s}  mean={row['mean']:.3f}  n={row['n_tasks']}")
 
     conn.close()
 
