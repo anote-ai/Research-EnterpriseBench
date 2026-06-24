@@ -12,7 +12,11 @@ from enterprisebench.evaluate import (
     pareto_frontier,
     task_complexity_score,
     agent_leaderboard,
+    claims_success,
+    verify_post_state,
+    score_false_completion,
 )
+from enterprisebench.core import BenchmarkTask, TaskResult
 
 
 def test_score_syntactic_perfect_match():
@@ -181,3 +185,124 @@ def test_score_reliability_single_hit():
     result = score_reliability(pred, exp)
     assert result.score == 1.0
     assert result.details["expected_name"] == "lookup_patient_record"
+
+
+# --- FCR: claims_success ---
+
+def test_claims_success_positive_phrases():
+    assert claims_success("Done. Successfully retrieved the stock price.")
+    assert claims_success("I have fetched the record for patient P-00123.")
+    assert claims_success("Here is the deployment status you requested.")
+    assert claims_success("The result has been retrieved.")
+    assert claims_success("Confirmed: api-gateway is running in production.")
+
+def test_claims_success_negative():
+    assert not claims_success("")
+    assert not claims_success("An error occurred while querying the API.")
+    assert not claims_success("Unable to find matching case law.")
+
+def test_claims_success_case_insensitive():
+    assert claims_success("SUCCESSFULLY completed the task.")
+    assert claims_success("RETRIEVED the patient record.")
+
+
+# --- FCR: verify_post_state ---
+
+def test_verify_post_state_exact_match():
+    call = {"name": "get_stock_price", "arguments": {"ticker": "AAPL", "date": "2024-03-31"}}
+    post = {"ticker": "AAPL", "date": "2024-03-31"}
+    assert verify_post_state(call, post) is True
+
+def test_verify_post_state_wrong_value():
+    call = {"name": "get_stock_price", "arguments": {"ticker": "MSFT", "date": "2024-03-31"}}
+    post = {"ticker": "AAPL", "date": "2024-03-31"}
+    assert verify_post_state(call, post) is False
+
+def test_verify_post_state_missing_key():
+    call = {"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}
+    post = {"ticker": "AAPL", "date": "2024-03-31"}
+    assert verify_post_state(call, post) is False
+
+def test_verify_post_state_empty_expected():
+    # No constraints means any call passes
+    call = {"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}
+    assert verify_post_state(call, {}) is True
+
+def test_verify_post_state_case_insensitive():
+    call = {"name": "get_stock_price", "arguments": {"ticker": "aapl", "date": "2024-03-31"}}
+    post = {"ticker": "AAPL", "date": "2024-03-31"}
+    assert verify_post_state(call, post) is True
+
+
+# --- FCR: score_false_completion ---
+
+def _make_task(expected_post_state=None):
+    return BenchmarkTask(
+        task_id="t-fcr",
+        vertical="finance",
+        instruction="Get AAPL price",
+        tool_schema={"name": "get_stock_price", "parameters": {}},
+        expected_call={"name": "get_stock_price", "arguments": {"ticker": "AAPL", "date": "2024-03-31"}},
+        expected_output="150.0",
+        expected_post_state=expected_post_state or {"ticker": "AAPL", "date": "2024-03-31"},
+    )
+
+def _make_result(predicted_call, output):
+    return TaskResult(
+        task_id="t-fcr",
+        vertical="finance",
+        predicted_call=predicted_call,
+        predicted_output=output,
+        latency_ms=100.0,
+        cost_usd=0.001,
+        agent_name="test-agent",
+    )
+
+def test_score_false_completion_genuine_success():
+    # Correct call + success claim → not a false completion → score 1.0
+    result = _make_result(
+        {"name": "get_stock_price", "arguments": {"ticker": "AAPL", "date": "2024-03-31"}},
+        "Successfully retrieved the closing price.",
+    )
+    ds = score_false_completion(result, _make_task())
+    assert ds.score == 1.0
+    assert ds.details["false_completion"] is False
+    assert ds.details["claimed_success"] is True
+    assert ds.details["state_verified"] is True
+
+def test_score_false_completion_wrong_call_but_claims_success():
+    # Wrong ticker + "done" in output → FALSE COMPLETION → score 0.0
+    result = _make_result(
+        {"name": "get_stock_price", "arguments": {"ticker": "MSFT", "date": "2024-03-31"}},
+        "Done. I have retrieved the stock price.",
+    )
+    ds = score_false_completion(result, _make_task())
+    assert ds.score == 0.0
+    assert ds.details["false_completion"] is True
+    assert ds.details["claimed_success"] is True
+    assert ds.details["state_verified"] is False
+
+def test_score_false_completion_wrong_call_no_claim():
+    # Wrong call but agent doesn't claim success → not a false completion → score 1.0
+    result = _make_result(
+        {"name": "get_stock_price", "arguments": {"ticker": "MSFT", "date": "2024-03-31"}},
+        "An error occurred.",
+    )
+    ds = score_false_completion(result, _make_task())
+    assert ds.score == 1.0
+    assert ds.details["false_completion"] is False
+
+def test_score_false_completion_no_post_state_defined():
+    # Task with no expected_post_state — any call passes verification
+    task = BenchmarkTask(
+        task_id="t-nostate",
+        vertical="devops",
+        instruction="Check status",
+        tool_schema={},
+        expected_call={},
+        expected_output="ok",
+    )
+    result = _make_result({}, "Successfully checked.")
+    ds = score_false_completion(result, task)
+    assert ds.score == 1.0
+    assert ds.details["state_verified"] is True
