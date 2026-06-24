@@ -26,6 +26,10 @@ class BenchmarkTask:
     expected_call: dict[str, Any]
     expected_output: str
     difficulty: str = "medium"
+    # System state before the agent acts; used for state-diff verification
+    pre_state: dict[str, Any] = field(default_factory=dict)
+    # Key-value constraints that must hold after a correct tool call
+    expected_post_state: dict[str, Any] = field(default_factory=dict)
     # For multi-turn tasks: ordered list of (instruction, expected_call) pairs
     turns: list[dict[str, Any]] = field(default_factory=list)
 
