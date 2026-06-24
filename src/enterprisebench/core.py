@@ -21,6 +21,7 @@ class EvaluationDimension(str, Enum):
     LATENCY = "latency"
     FALSE_COMPLETION = "false_completion"
     POLICY_VIOLATION = "policy_violation"
+    MTCS = "mtcs"
 
 
 VERTICALS = ["finance", "healthcare", "legal", "devops"]
