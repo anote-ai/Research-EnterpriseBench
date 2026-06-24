@@ -31,7 +31,7 @@ def main():
     save_tasks(conn, suite.tasks)
     save_run(conn, run_id, agent_name="mock-agent", n_tasks=len(suite.tasks), seed=SEED)
 
-    all_dims = ["syntactic", "semantic", "reliability", "cost", "latency", "false_completion"]
+    all_dims = ["syntactic", "semantic", "reliability", "cost", "latency", "false_completion", "policy_violation"]
     dim_scores: dict[str, list[float]] = {d: [] for d in all_dims}
     for task in suite.tasks:
         result = suite.run_agent(mock_agent, task)

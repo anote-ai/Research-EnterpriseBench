@@ -6,6 +6,13 @@ from typing import Any
 import time
 
 
+@dataclass
+class DimensionScore:
+    dimension: "EvaluationDimension"
+    score: float
+    details: dict
+
+
 class EvaluationDimension(str, Enum):
     SYNTACTIC = "syntactic"
     SEMANTIC = "semantic"
@@ -13,6 +20,7 @@ class EvaluationDimension(str, Enum):
     COST = "cost"
     LATENCY = "latency"
     FALSE_COMPLETION = "false_completion"
+    POLICY_VIOLATION = "policy_violation"
 
 
 VERTICALS = ["finance", "healthcare", "legal", "devops"]

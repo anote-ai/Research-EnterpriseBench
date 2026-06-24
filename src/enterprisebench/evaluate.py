@@ -1,15 +1,8 @@
 from __future__ import annotations
 import math
 import re
-from dataclasses import dataclass
-from .core import BenchmarkTask, TaskResult, EvaluationDimension
-
-
-@dataclass
-class DimensionScore:
-    dimension: EvaluationDimension
-    score: float
-    details: dict
+from .core import BenchmarkTask, TaskResult, EvaluationDimension, DimensionScore
+from . import policy as _policy
 
 
 def _value_jaccard(pred_args: dict, exp_args: dict) -> float:
@@ -205,6 +198,7 @@ def evaluate_result(result: TaskResult, task: BenchmarkTask) -> dict[str, Dimens
         "latency": score_latency(result.latency_ms),
         "cost": score_cost(result.cost_usd),
         "false_completion": score_false_completion(result, task),
+        "policy_violation": _policy.score_policy_violation(result, task),
     }
 
 
@@ -241,7 +235,7 @@ def task_complexity_score(
     return min(raw + branch_factor * 0.1, 1.0)
 
 
-DIMENSION_ORDER = ["syntactic", "semantic", "reliability", "cost", "latency", "false_completion"]
+DIMENSION_ORDER = ["syntactic", "semantic", "reliability", "cost", "latency", "false_completion", "policy_violation"]
 
 
 def agent_leaderboard(

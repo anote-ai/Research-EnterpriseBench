@@ -1,7 +1,6 @@
 """EnterpriseBench: Multi-dimensional LLM evaluation for enterprise tool-use tasks."""
-from .core import BenchmarkTask, BenchmarkSuite, TaskResult, TurnResult, EvaluationDimension, VERTICALS
+from .core import BenchmarkTask, BenchmarkSuite, TaskResult, TurnResult, EvaluationDimension, DimensionScore, VERTICALS
 from .evaluate import (
-    DimensionScore,
     score_syntactic,
     score_semantic,
     score_reliability,
