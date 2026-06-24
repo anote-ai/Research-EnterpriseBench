@@ -12,6 +12,7 @@ class EvaluationDimension(str, Enum):
     RELIABILITY = "reliability"
     COST = "cost"
     LATENCY = "latency"
+    FALSE_COMPLETION = "false_completion"
 
 
 VERTICALS = ["finance", "healthcare", "legal", "devops"]

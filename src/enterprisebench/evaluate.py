@@ -1,5 +1,6 @@
 from __future__ import annotations
 import math
+import re
 from dataclasses import dataclass
 from .core import BenchmarkTask, TaskResult, EvaluationDimension
 
@@ -141,6 +142,59 @@ def score_reliability(
     )
 
 
+# Phrases that indicate the agent is claiming the task succeeded
+_SUCCESS_PHRASES = re.compile(
+    r"\b(done|success|successfully|completed|retrieved|fetched|found|"
+    r"here is|here are|the result|the price|the status|the record|i have|"
+    r"i've|confirmed|verified|checked)\b",
+    re.IGNORECASE,
+)
+
+
+def claims_success(output: str) -> bool:
+    """Return True if the agent output contains language asserting task success."""
+    return bool(_SUCCESS_PHRASES.search(output))
+
+
+def verify_post_state(predicted_call: dict, expected_post_state: dict) -> bool:
+    """Check whether predicted_call arguments satisfy expected_post_state constraints.
+
+    expected_post_state is a flat dict of key→value pairs that must appear in
+    the predicted call's arguments.  Missing or mismatched values fail verification.
+    """
+    if not expected_post_state:
+        return True
+    pred_args = predicted_call.get("arguments", {})
+    for key, expected_val in expected_post_state.items():
+        actual_val = pred_args.get(key)
+        if actual_val is None:
+            return False
+        if str(actual_val).lower() != str(expected_val).lower():
+            return False
+    return True
+
+
+def score_false_completion(result: TaskResult, task: BenchmarkTask) -> DimensionScore:
+    """Score whether the agent falsely claimed success when state verification failed.
+
+    Returns 1.0 when the agent either genuinely succeeded (verified) or correctly
+    did not claim success.  Returns 0.0 when the agent claimed success but the
+    predicted call fails post-state verification — a False Completion.
+    """
+    claimed = claims_success(result.predicted_output)
+    verified = verify_post_state(result.predicted_call, task.expected_post_state)
+    false_completion = claimed and not verified
+    return DimensionScore(
+        EvaluationDimension.FALSE_COMPLETION,
+        0.0 if false_completion else 1.0,
+        {
+            "claimed_success": claimed,
+            "state_verified": verified,
+            "false_completion": false_completion,
+        },
+    )
+
+
 def evaluate_result(result: TaskResult, task: BenchmarkTask) -> dict[str, DimensionScore]:
     return {
         "syntactic": score_syntactic(result.predicted_call, task.expected_call),
@@ -150,6 +204,7 @@ def evaluate_result(result: TaskResult, task: BenchmarkTask) -> dict[str, Dimens
         "reliability": score_reliability([result.predicted_call], [task.expected_call]),
         "latency": score_latency(result.latency_ms),
         "cost": score_cost(result.cost_usd),
+        "false_completion": score_false_completion(result, task),
     }
 
 
@@ -186,7 +241,7 @@ def task_complexity_score(
     return min(raw + branch_factor * 0.1, 1.0)
 
 
-DIMENSION_ORDER = ["syntactic", "semantic", "reliability", "cost", "latency"]
+DIMENSION_ORDER = ["syntactic", "semantic", "reliability", "cost", "latency", "false_completion"]
 
 
 def agent_leaderboard(
