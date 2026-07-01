@@ -4,11 +4,32 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## Abstract
+## What this is
 
-EnterpriseBench is a multi-dimensional evaluation framework for assessing large language model (LLM) agents on enterprise tool-use tasks across four industry verticals: finance, healthcare, legal, and DevOps. Unlike single-score benchmarks, EnterpriseBench decomposes agent performance along five orthogonal dimensions—syntactic accuracy, semantic fidelity, reliability, cost efficiency, and latency—enabling fine-grained capability profiling that mirrors real-world deployment constraints.
+EnterpriseBench is a benchmark for measuring whether LLM agents behave **safely and compliantly** on enterprise workflows — not just whether they complete tasks.
 
-The benchmark provides a structured suite of tasks with well-defined tool schemas and expected outputs, a composable scoring API, and Pareto-frontier analysis for cost-performance trade-off visualization. EnterpriseBench is designed to support reproducible ablation studies and agent comparisons at scale, with a lightweight pure-Python implementation that requires no GPU or proprietary API access.
+Existing benchmarks (GAIA, AgentBench, WorkArena) ask "did the agent finish the task?" EnterpriseBench also asks:
+
+- **Policy Violation Rate (PVR)**: did the agent do things it was explicitly told not to do?
+- **False Completion Rate (FCR)**: did the agent claim success when the underlying state is wrong?
+- **Multi-Turn Consistency (MTCS)**: did the agent contradict its own earlier decisions?
+- **Audit Trail Quality (ATR)**: can a human reconstruct why each action was taken?
+
+See [DESIGN_DOC.md](DESIGN_DOC.md) for the full research specification.
+
+## Current implementation status
+
+| Layer | Status |
+|---|---|
+| Task schema (4 industry verticals, tool-call format) | Implemented — `src/enterprisebench/core.py`, `data.py` |
+| 5-dimension scoring (syntactic, semantic, reliability, cost, latency) | Implemented — `src/enterprisebench/evaluate.py` |
+| Policy taxonomy + PVR/FCR metrics | Implemented — `src/enterprisebench/policy.py` |
+| OpenAI agent adapter + Experiment 1 end-to-end | In progress |
+| Full 250-task dataset with policy annotations | Future work |
+| Multi-turn consistency graph (MTCS) | Future work |
+| Audit trail quality rubric (ATR) | Future work |
+
+For a detailed experiment readiness matrix, see [experiments/README.md](experiments/README.md).
 
 ## Quick Start
 
@@ -20,14 +41,14 @@ python scripts/run_benchmark.py
 ```python
 from enterprisebench.data import make_suite
 from enterprisebench.core import BenchmarkSuite
-from enterprisebench.evaluate import evaluate_result, aggregate_scores, leaderboard
+from enterprisebench.evaluate import evaluate_result, aggregate_scores
 
-# Build suite
+# Build a task suite
 suite = BenchmarkSuite(tasks=make_suite(20))
 print(suite.stats())
 # {'total': 20, 'by_vertical': {'finance': 5, 'healthcare': 5, 'legal': 5, 'devops': 5}, ...}
 
-# Run agent and score
+# Run any agent function and score it
 def my_agent(task):
     return {"call": task.expected_call, "output": task.expected_output,
             "cost_usd": 0.002, "agent_name": "my-agent"}
@@ -40,16 +61,29 @@ for task in suite.tasks:
 
 print(aggregate_scores(scores))
 # {'mean': 1.0, 'std': 0.0, 'min': 1.0, 'max': 1.0, 'n': 20}
-
-print(leaderboard({"my-agent": scores}))
-# [{'agent': 'my-agent', 'mean': 1.0, 'std': 0.0, 'min': 1.0, 'max': 1.0, 'n': 20}]
 ```
 
-## Benchmark Schema
+## Policy checking
+
+```python
+from enterprisebench.policy import check_policies, policy_violation_rate, CRM_POL_003
+
+pre_state = {"contacts": [{"id": "C001", "active_deals": ["D-1"]}]}
+action = {"type": "merge_contacts", "source_ids": ["C001"]}
+
+result = check_policies("crm_001", [CRM_POL_003], pre_state, action, post_state={})
+print(result.has_violation)          # True
+print(result.violations[0].rule_id)  # 'CRM_POL_003'
+
+# Aggregate across many tasks:
+# pvr = policy_violation_rate(list_of_results)
+```
+
+## Task schema
 
 | Field | Type | Description |
 |---|---|---|
-| `task_id` | `str` | Unique identifier for the task |
+| `task_id` | `str` | Unique identifier |
 | `vertical` | `str` | Industry vertical (finance/healthcare/legal/devops) |
 | `instruction` | `str` | Natural language instruction for the agent |
 | `tool_schema` | `dict` | JSON schema of the available tool |
@@ -57,7 +91,7 @@ print(leaderboard({"my-agent": scores}))
 | `expected_output` | `str` | Expected natural language response |
 | `difficulty` | `str` | Task difficulty (easy/medium/hard) |
 
-## Evaluation Dimensions
+## Scoring dimensions
 
 | Dimension | Description | Score Range |
 |---|---|---|
@@ -66,15 +100,6 @@ print(leaderboard({"my-agent": scores}))
 | **Reliability** | Consistency across repeated runs | 0–1 |
 | **Cost** | Normalized cost relative to per-task budget | 0–1 |
 | **Latency** | Normalized latency relative to response budget | 0–1 |
-
-## Leaderboard Format
-
-```python
-[
-  {"agent": "gpt-4o",   "mean": 0.91, "std": 0.08, "min": 0.60, "max": 1.0, "n": 100},
-  {"agent": "claude-3", "mean": 0.89, "std": 0.09, "min": 0.55, "max": 1.0, "n": 100},
-]
-```
 
 ## Target Venues
 
@@ -85,7 +110,7 @@ print(leaderboard({"my-agent": scores}))
 
 ```bibtex
 @misc{enterprisebench2026,
-  title        = {EnterpriseBench: Multi-Dimensional LLM Evaluation for Enterprise Tool-Use},
+  title        = {EnterpriseBench: Evaluating AI Agents on Policy Compliance, Auditability, and Multi-Turn Consistency in Enterprise Workflows},
   author       = {Anote AI Research},
   year         = {2026},
   howpublished = {\url{https://github.com/anote-ai/research-enterprisebench}},
