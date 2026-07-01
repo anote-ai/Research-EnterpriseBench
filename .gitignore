@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Results (produced by experiment scripts, not checked in)
+results/
+
+# IDE
+.vscode/
+.idea/
