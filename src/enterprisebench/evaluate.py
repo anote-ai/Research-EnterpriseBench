@@ -1,5 +1,6 @@
 from __future__ import annotations
 import math
+import random
 from dataclasses import dataclass
 from .core import BenchmarkTask, TaskResult, EvaluationDimension
 
@@ -201,3 +202,77 @@ def agent_leaderboard(
         rows.append({"agent": agent, **stats})
     rows.sort(key=lambda x: x["mean"], reverse=True)
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Statistical utilities — issue #15
+# ---------------------------------------------------------------------------
+
+def bootstrap_ci(
+    scores: list[float],
+    n_resamples: int = 1000,
+    confidence: float = 0.95,
+    seed: int = 42,
+) -> dict:
+    """95% bootstrap confidence interval for the mean of `scores`.
+
+    Returns {"mean": float, "ci_low": float, "ci_high": float, "n": int}.
+    Resample tasks (not individual steps) to account for task-level clustering.
+    """
+    if not scores:
+        return {"mean": 0.0, "ci_low": 0.0, "ci_high": 0.0, "n": 0}
+
+    rng = random.Random(seed)
+    n = len(scores)
+    boot_means = []
+    for _ in range(n_resamples):
+        sample = [rng.choice(scores) for _ in range(n)]
+        boot_means.append(sum(sample) / n)
+
+    boot_means.sort()
+    alpha = 1.0 - confidence
+    lo_idx = int(alpha / 2 * n_resamples)
+    hi_idx = int((1 - alpha / 2) * n_resamples) - 1
+
+    return {
+        "mean": sum(scores) / n,
+        "ci_low": boot_means[lo_idx],
+        "ci_high": boot_means[hi_idx],
+        "n": n,
+    }
+
+
+def paired_bootstrap_test(
+    scores_a: list[float],
+    scores_b: list[float],
+    n_resamples: int = 1000,
+    seed: int = 42,
+) -> dict:
+    """Paired bootstrap significance test: is mean(A) > mean(B)?
+
+    Returns {"observed_diff": float, "p_value": float}.
+    p_value is the fraction of bootstrap resamples where the difference
+    reverses — i.e. P(boot_diff <= 0) when observed_diff > 0.
+
+    Reference: Dror et al. (2018), "The Hitchhiker's Guide to Testing
+    Statistical Significance in NLP."
+    """
+    if len(scores_a) != len(scores_b):
+        raise ValueError("scores_a and scores_b must be the same length")
+    if not scores_a:
+        raise ValueError("scores must be non-empty")
+
+    n = len(scores_a)
+    observed_diff = sum(scores_a) / n - sum(scores_b) / n
+
+    rng = random.Random(seed)
+    count_reversed = 0
+    for _ in range(n_resamples):
+        indices = [rng.randint(0, n - 1) for _ in range(n)]
+        diff = sum(scores_a[i] - scores_b[i] for i in indices) / n
+        if diff <= 0:
+            count_reversed += 1
+
+    p_value = count_reversed / n_resamples
+
+    return {"observed_diff": observed_diff, "p_value": p_value}
