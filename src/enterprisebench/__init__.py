@@ -1,5 +1,6 @@
 """EnterpriseBench: Multi-dimensional LLM evaluation for enterprise tool-use tasks."""
 from .core import BenchmarkTask, BenchmarkSuite, TaskResult, TurnResult, EvaluationDimension, VERTICALS
+from .tasks import WorkflowCategory, WorkflowTask, make_workflow_suite, tasks_by_category
 from .consistency import (
     Decision,
     ConsistencyViolation,
@@ -24,6 +25,10 @@ from .evaluate import (
 
 __version__ = "0.1.0"
 __all__ = [
+    "WorkflowCategory",
+    "WorkflowTask",
+    "make_workflow_suite",
+    "tasks_by_category",
     "Decision",
     "ConsistencyViolation",
     "ConsistencyResult",
