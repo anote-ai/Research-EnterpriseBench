@@ -205,6 +205,109 @@ def agent_leaderboard(
 
 
 # ---------------------------------------------------------------------------
+# CLAS composite metric — issue #3
+# ---------------------------------------------------------------------------
+
+# Default weights inspired by CEBench (arXiv:2407.12797).
+# All five dimensions sum to 1.0. Adjust per deployment context.
+_DEFAULT_CLAS_WEIGHTS: dict[str, float] = {
+    "syntactic":   0.30,   # C — Correctness (tool-call accuracy)
+    "semantic":    0.20,   # C — semantic fidelity
+    "reliability": 0.20,   # L/S — consistency across runs
+    "cost":        0.15,   # A — cost efficiency (higher = cheaper)
+    "latency":     0.15,   # L — latency efficiency (higher = faster)
+}
+
+
+def clas_score(
+    dim_scores: dict[str, float],
+    weights: dict[str, float] | None = None,
+) -> float:
+    """Weighted composite of the five evaluation dimensions.
+
+    Args:
+        dim_scores: mapping of dimension name → score in [0, 1].
+                    Keys: "syntactic", "semantic", "reliability", "cost", "latency".
+        weights:    optional override of _DEFAULT_CLAS_WEIGHTS. Must sum to 1.0.
+
+    Returns a single float in [0, 1]. Higher is better.
+    """
+    w = weights if weights is not None else _DEFAULT_CLAS_WEIGHTS
+    return sum(dim_scores.get(dim, 0.0) * weight for dim, weight in w.items())
+
+
+def cost_per_success(
+    costs_usd: list[float],
+    syntactic_scores: list[float],
+    success_threshold: float = 0.8,
+) -> float:
+    """Mean cost (USD) per task where syntactic score >= success_threshold.
+
+    Returns float('inf') if no task meets the threshold (agent never succeeds).
+    This surfaces the true cost of a correct answer, not cost per attempt.
+    """
+    if len(costs_usd) != len(syntactic_scores):
+        raise ValueError("costs_usd and syntactic_scores must be the same length")
+    successful_costs = [
+        c for c, s in zip(costs_usd, syntactic_scores) if s >= success_threshold
+    ]
+    return sum(successful_costs) / len(successful_costs) if successful_costs else float("inf")
+
+
+def clas_leaderboard(
+    agent_dim_scores: dict[str, dict[str, list[float]]],
+    agent_costs_usd: dict[str, list[float]] | None = None,
+    weights: dict[str, float] | None = None,
+    success_threshold: float = 0.8,
+) -> list[dict]:
+    """Rank agents by CLAS composite score with cost-per-success column.
+
+    Args:
+        agent_dim_scores: {agent_name: {dim_name: [per-task scores]}}.
+        agent_costs_usd:  {agent_name: [per-task cost in USD]}.
+        weights:          dimension weights for clas_score().
+        success_threshold: syntactic score threshold defining "success".
+
+    Returns a list of dicts sorted by clas_mean descending, each with:
+        agent, clas_mean, clas_ci_low, clas_ci_high, cost_per_success_usd,
+        and per-dimension means.
+    """
+    rows = []
+    for agent, dims in agent_dim_scores.items():
+        # Compute per-task CLAS scores
+        n_tasks = max((len(v) for v in dims.values()), default=0)
+        per_task_clas = [
+            clas_score(
+                {dim: scores[i] for dim, scores in dims.items() if i < len(scores)},
+                weights=weights,
+            )
+            for i in range(n_tasks)
+        ]
+        ci = bootstrap_ci(per_task_clas)
+
+        # Cost per success
+        syntactic_scores = dims.get("syntactic", [])
+        costs = (agent_costs_usd or {}).get(agent, [0.0] * n_tasks)
+        cps = cost_per_success(costs, syntactic_scores, success_threshold)
+
+        row: dict = {
+            "agent": agent,
+            "clas_mean": ci["mean"],
+            "clas_ci_low": ci["ci_low"],
+            "clas_ci_high": ci["ci_high"],
+            "cost_per_success_usd": cps,
+        }
+        # Also include per-dimension means for transparency
+        for dim, scores in dims.items():
+            row[f"{dim}_mean"] = sum(scores) / len(scores) if scores else 0.0
+
+        rows.append(row)
+
+    rows.sort(key=lambda r: r["clas_mean"], reverse=True)
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # Statistical utilities — issue #15
 # ---------------------------------------------------------------------------
 

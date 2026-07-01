@@ -21,6 +21,9 @@ from .evaluate import (
     pareto_frontier,
     bootstrap_ci,
     paired_bootstrap_test,
+    clas_score,
+    cost_per_success,
+    clas_leaderboard,
 )
 
 __version__ = "0.1.0"
@@ -52,4 +55,7 @@ __all__ = [
     "pareto_frontier",
     "bootstrap_ci",
     "paired_bootstrap_test",
+    "clas_score",
+    "cost_per_success",
+    "clas_leaderboard",
 ]
