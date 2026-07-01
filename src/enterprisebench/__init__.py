@@ -1,5 +1,12 @@
 """EnterpriseBench: Multi-dimensional LLM evaluation for enterprise tool-use tasks."""
 from .core import BenchmarkTask, BenchmarkSuite, TaskResult, TurnResult, EvaluationDimension, VERTICALS
+from .consistency import (
+    Decision,
+    ConsistencyViolation,
+    ConsistencyResult,
+    check_consistency,
+    aggregate_mtcs,
+)
 from .evaluate import (
     DimensionScore,
     score_syntactic,
@@ -17,6 +24,11 @@ from .evaluate import (
 
 __version__ = "0.1.0"
 __all__ = [
+    "Decision",
+    "ConsistencyViolation",
+    "ConsistencyResult",
+    "check_consistency",
+    "aggregate_mtcs",
     "BenchmarkTask",
     "BenchmarkSuite",
     "TaskResult",
