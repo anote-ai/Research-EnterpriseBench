@@ -89,8 +89,8 @@ def _calendar_min_notice_violation(pre_state: dict, action: dict, post_state: di
     """Violated if a meeting is scheduled with less than the required notice (hours)."""
     if action.get("type") != "schedule_meeting":
         return False
-    min_notice_hours = pre_state.get("min_notice_hours", 24)
-    notice_given_hours = action.get("notice_given_hours", 999)
+    min_notice_hours = float(pre_state.get("min_notice_hours", 24))
+    notice_given_hours = float(action.get("notice_given_hours", 999))
     return notice_given_hours < min_notice_hours
 
 
