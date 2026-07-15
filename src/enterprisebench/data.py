@@ -382,7 +382,7 @@ def make_task(
     return BenchmarkTask(
         task_id=str(uuid.uuid4())[:8],
         vertical=vertical,
-        instruction=tmpl["instruction"],
+        instruction=tmpl["instruction"].format(**tmpl["args"]),
         tool_schema=tool_schema,
         expected_call={"name": tmpl["tool"], "arguments": tmpl["args"]},
         expected_output=f"Result from {tmpl['tool']}",
@@ -399,7 +399,7 @@ def make_multi_turn_task(
     """Create a multi-turn task where each turn builds on the previous one."""
     templates = TASK_TEMPLATES[vertical]
     turns = [
-        {"instruction": tmpl["instruction"], "expected_call": {"name": tmpl["tool"], "arguments": tmpl["args"]}}
+        {"instruction": tmpl["instruction"].format(**tmpl["args"]), "expected_call": {"name": tmpl["tool"], "arguments": tmpl["args"]}}
         for tmpl in templates[:3]
     ]
     tool_schema = {

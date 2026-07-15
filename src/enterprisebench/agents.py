@@ -184,18 +184,20 @@ class OpenAIAgent:
                 "name": tc.function.name,
                 "arguments": json.loads(tc.function.arguments),
             }
-            # Send mock tool result back for natural-language summary
+            # OpenAI requires a tool response for every tool_call_id in the
+            # assistant message, not just the one we score against.
+            tool_responses = [
+                {"role": "tool", "tool_call_id": call.id, "content": "mock_result"}
+                for call in msg.tool_calls
+            ]
+            # Send mock tool result(s) back for natural-language summary
             followup = self._client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": _build_system_prompt()},
                     {"role": "user", "content": _build_user_message(task)},
                     msg,
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": "mock_result",
-                    },
+                    *tool_responses,
                 ],
             )
             fu = followup.usage
