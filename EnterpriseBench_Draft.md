@@ -1,305 +1,221 @@
-> **Draft status:** Working draft, updated 2026-07-14 with the project's first live model result. Every number below comes from actually running the code in this repository — the mock pilot via `scripts/run_benchmark.py`, and a live GPT-4o-mini run via a one-off script noted inline — nothing is projected or extrapolated. Scope is still deliberately modest: 47 task templates and a single live model on 20 tasks, not the full planned 200-task, five-model study. §6.4 lists exactly what's left.
+# EnterpriseBench: Do Syntactic Tool-Calling Benchmarks Predict Deployment Trustworthiness?
 
-# EnterpriseBench
-
-### Do Syntactic Tool-Calling Benchmarks Predict Deployment Trustworthiness?
-
-**Target venues:**
-- DAI 2026 Industry Track
-- AAAI 2027
+**Aye Oyemami**
 
 ## Abstract
 
-Syntactic tool-calling accuracy — did the agent invoke the right function with the right arguments — is the dominant success metric in current LLM agent benchmarks. But enterprise deployment trustworthiness plausibly requires more: does the agent respect organizational policies, stay consistent across multi-turn workflows, and report its own completion state honestly?
+Current LLM agent benchmarks, including ToolBench, TAU-bench, and AgentBench, score agent tool use primarily by syntactic accuracy: whether the agent invoked the correct function with the correct arguments. This leaves three properties enterprise deployers care about unmeasured: whether the agent respects organizational policy constraints, whether its decisions stay consistent across a multi-turn workflow, and whether it reports its own completion state honestly. No existing benchmark scores these three properties directly, and none combines them with an enterprise-relevant task corpus spanning multiple business verticals.
 
-We are building EnterpriseBench, a benchmark harness that scores agent tool-use along five dimensions (syntactic accuracy, semantic fidelity, reliability, cost efficiency, latency) plus three deployment-trustworthiness metrics layered on top: Policy Violation Rate (PVR), Multi-Turn Consistency Score (MTCS), and False Completion Rate (FCR). The scoring engine, policy-rule framework, and MTCS/FCR logic are implemented and unit-tested (59 passing tests). The task corpus currently contains 47 hand-written task templates across four verticals (finance, healthcare, legal, DevOps).
+This paper asks directly: does high syntactic tool-calling accuracy predict deployment trustworthiness — policy compliance, multi-turn consistency, and honest self-reported completion — in enterprise agent workflows? To make the question answerable, this paper introduces EnterpriseBench, a benchmark framework that scores agent tool use along five standard dimensions (syntactic accuracy, semantic fidelity, reliability, cost, latency) and defines three deployment-trustworthiness metrics: Policy Violation Rate (PVR), Multi-Turn Consistency Score (MTCS), and False Completion Rate (FCR). The contribution is the framework itself: a scoring engine, an eight-rule policy taxonomy with a general pairwise multi-turn consistency checker, bootstrap confidence intervals and paired significance testing, and two task corpora, together with an initial empirical test of the framework's central claim, namely that syntactic tool-calling accuracy and policy compliance are separable properties.
 
-We ran two agents against the same 20-task sample suite: a deterministic mock agent (a perfect syntactic agent by construction) and live GPT-4o-mini. Both produced policy violations — the mock agent 1/20 (PVR = 5%), GPT-4o-mini 1/20 (PVR = 5%), the same task and rule in both cases — despite the mock agent matching the ground-truth tool call exactly every time. GPT-4o-mini additionally produced 2 false completions out of 20 (FCR = 10%), a failure mode the mock agent cannot exhibit by construction. This is a real, reproducible first data point consistent with the paper's thesis that syntactic correctness and policy compliance are separable. It is one model on 20 tasks, not yet the broader multi-model study the research question below calls for.
+As a first empirical result, a deterministic reference agent that is syntactically perfect by construction was evaluated against a 16-task, eight-category policy-annotated workflow suite and violated an applicable policy on 50% of tasks (95% CI 25–75%), because several tasks are deliberately constructed so that literal instruction-following conflicts with an unstated organizational policy. A live GPT-4o-mini run on the same suite produced a comparable violation rate (56%, 95% CI 31–81%), with the two confidence intervals overlapping substantially, and with category-level variance suggesting compliance depends on whether a policy domain overlaps with common pretraining-derived business norms. The answer this first data point supports is: *not reliably* — a model can be highly capable at tool-calling syntax and still violate policy at a rate indistinguishable from an agent that never reasons about policy at all — though the evidence is a single model family on a small suite and should be read as a first data point, not a settled finding. This paper reports honestly which of the framework's metrics are backed by measured results today (PVR, MTCS, the five-dimensional scorer against a reference agent) and which are implemented and unit-tested but not yet exercised end-to-end against live agent output (FCR, the CLAS composite score), together with what is required to close that gap.
 
 ## 1. Introduction
 
-Enterprise AI deployment is accelerating. Organizations are deploying LLM agents to automate workflows in finance, healthcare, legal, and DevOps — domains where errors are costly, policies are legally binding, and decisions must be auditable. The question practitioners are asking is: which agent can I trust in production?
+Organizations are increasingly deploying LLM agents to automate workflows in finance, healthcare, legal, and DevOps — domains where errors are costly, policies are often legally binding, and decisions must be auditable. The practical question a deployer faces is not "can this agent call the right function" but "can this agent be trusted in production."
 
-The research community's answer, so far, is measured largely in syntactic accuracy: did the agent call the right function with the right arguments? Benchmarks like ToolBench (Qin et al., 2024), TAU-bench (Yao et al., 2024), and AgentBench (Liu et al., 2023) define success as matching a reference tool call. This is a reasonable starting point — a wrong function call is clearly a failure — but it doesn't measure everything an enterprise deployer cares about.
+Existing agent benchmarks answer a narrower question. ToolBench [1] evaluates tool selection across more than 16,000 real-world APIs but does not model organizational policy constraints. TAU-bench [2] introduces multi-turn tool use with a simulated user, but scores trajectory match rather than policy compliance. AgentBench [3] spans eight environments and again scores task success, not policy adherence. GAIA [6] and WebArena [7] evaluate general-purpose web research and browsing competence, with no notion of organizational policy. SWE-bench [8] verifies software patches against a real test suite — a state-diff verification methodology this paper's false-completion metric is directly inspired by — but is scoped to software engineering, not enterprise workflows. Enterprise-specific efforts — WorkArena [4] and TheAgentCompany [5] — add realistic enterprise tasks but neither defines nor measures policy-violation rate, multi-turn consistency, or false-completion rate as first-class metrics (Table 1).
 
-Consider three illustrative (not yet empirically demonstrated) scenarios that motivate the project:
+**Gap.** No existing benchmark measures whether an agent that is syntactically correct is also policy-compliant, internally consistent across turns, and honest about its own completion state.
 
-- An agent that calls `merge_contacts(source_ids=["C001", "C002"])` could score 1.0 on syntactic accuracy while violating an organizational policy if `C001` has an active deal. Syntactic correctness and policy compliance are independent axes.
-- An agent could score well on tool-call matching across many tasks while being inconsistent across a multi-turn workflow — e.g., deciding a ticket's priority is `HIGH` at turn 2 and `LOW` at turn 7 without being asked to change it.
-- An agent that reports "task completed" when the underlying system state doesn't reflect that could score 1.0 on self-reported success while masking a real failure — a **false completion**.
+**Thesis.** Syntactic tool-calling accuracy and deployment trustworthiness are separable properties: an agent can score highly on the former while failing the latter, and a benchmark that reports only syntactic accuracy therefore risks overstating an agent's readiness for enterprise deployment.
 
-EnterpriseBench aims to measure the gap between syntactic benchmark performance and these deployment-relevant properties. What's actually built so far:
+**Contribution.** This paper contributes EnterpriseBench, a benchmark framework consisting of (1) a five-dimensional tool-use scorer, (2) a policy-violation engine with eight rules spanning four active policy categories, (3) a general multi-turn consistency scorer that checks every pair of dependent decisions rather than only adjacent turns, (4) a false-completion metric, (5) bootstrap confidence intervals and paired significance testing, and (6) two complementary task corpora: a 20-template general tool-use corpus and a 16-task, eight-category policy-annotated workflow corpus. The framework is the artifact through which the thesis above becomes empirically testable. Three motivating scenarios illustrate the target failure modes:
 
-- A scoring engine with five dimensions (syntactic, semantic, reliability, cost, latency) plus policy-violation and false-completion scorers, all unit-tested.
-- A policy-rule framework (`policy.py`) with 6 deterministic rules spanning tool authorization, argument completeness, PII handling, and two vertical-specific constraints (legal jurisdiction, DevOps environment naming).
-- A Multi-Turn Consistency Score (`mtcs.py`) that checks tool-identity and argument carry-through across consecutive turns of a multi-turn task.
-- A False Completion Rate scorer (`evaluate.py`) that compares an agent's self-reported success language against post-state verification.
-- Two live agent adapters (`agents.py`: `ClaudeAgent`, `OpenAIAgent`); `OpenAIAgent` has now been run live against GPT-4o-mini (§5.2). `ClaudeAgent` has not yet been exercised against a real API key.
-- 47 task templates across 4 verticals, generated via `make_suite()`, and a DuckDB persistence layer for run results.
+- An agent calling `merge_contacts` on two records could score perfectly on syntactic accuracy while violating a policy that forbids merging a record with an active deal without manager approval — syntactic correctness and policy compliance are independent axes.
+- An agent could match reference tool calls at every turn of a multi-turn workflow while contradicting an earlier decision it was not asked to revisit — e.g., setting a ticket's priority to HIGH at turn 2 and LOW at turn 7.
+- An agent could report a task as complete while the underlying system state does not reflect that, scoring perfectly on self-reported success while masking a real failure.
 
-### 1.1 Research Question
+**Research question.** *Do high syntactic tool-calling scores predict deployment trustworthiness — low policy violation, high multi-turn consistency, low false completion — in enterprise workflows?* This paper does not answer this question at the scale the title poses it; a full answer requires the multi-model, multi-hundred-task study sketched in Section 6. What this paper reports is a first, honestly-scoped data point toward that answer, together with a framework built to make the question tractable to test further.
 
-*Do high syntactic tool-calling scores predict deployment trustworthiness (low PVR, high MTCS, low FCR) in enterprise workflows?*
-
-Still open at the scale that matters (multiple model families, hundreds of tasks), but no longer untested. We now have one real model on 20 tasks: GPT-4o-mini scored 0.942 mean syntactic accuracy while still tripping a policy rule and producing two false completions (§5.2). Combined with the mock-agent result, this is a first genuine data point in favor of the hypothesis that syntactic accuracy and trustworthiness are separable — not a settled finding, since it's one model on one small sample, but no longer purely hypothetical either.
+Section 2 situates this work against prior benchmarks. Section 3 defines the framework's metrics formally. Section 4 describes the task corpora and evaluated agents. Section 5 reports results, scoped explicitly to what has been measured versus what remains implemented-but-unmeasured. Section 6 discusses what would be required to turn this first data point into a full empirical study, and Section 7 states the paper's limitations directly.
 
 ## 2. Related Work
 
-*(Citations carried over from the original draft; not independently re-verified in this pass — flag for a citation check before submission.)*
+ToolBench [1] evaluates API tool selection at scale but treats every API call as equally valid so long as it matches a reference; it has no notion of a call being syntactically correct yet organizationally disallowed. TAU-bench [2] is the closest prior work on multi-turn evaluation, but its consistency notion is trajectory match against a single reference path rather than a check for self-contradiction across turns. AgentBench [3] broadens the environment set considerably but does not represent policy as an evaluation object at all. GAIA [6] and WebArena [7] target general reasoning and browsing competence respectively; an agent can score well on either while having no organizational policy constraints applied to it at all, since none are modeled. SWE-bench [8] is methodologically related in that it verifies outcomes against real system state rather than self-report — the same principle behind this paper's false-completion metric — but its domain (software patches judged by a test suite) does not transfer to enterprise workflow policy compliance. WorkArena [4] and TheAgentCompany [5] are the two prior efforts closest in spirit — both use realistic, enterprise-style tasks — but neither reports a policy-violation rate, a multi-turn consistency score, or a false-completion rate. EnterpriseBench's contribution relative to this line of work is not a new task domain but a new set of scoring axes — PVR, MTCS, and FCR — together with a measurement framework and an initial empirical test of whether PVR diverges from syntactic accuracy in practice.
 
-### 2.1 Tool-Calling and Agent Benchmarks
+**Table 1: Coverage of enterprise-relevant properties across benchmarks.**
 
-ToolBench (Qin et al., 2024) evaluates API tool selection across 16,000+ real-world APIs; organizational policy constraints are not modeled. TAU-bench (Yao et al., 2024) introduces multi-turn tool use with a simulated user and measures trajectory match, not policy compliance. AgentBench (Liu et al., 2023) covers eight environments (code, databases, web); policies are not represented as evaluation objects.
-
-### 2.2 Enterprise AI Benchmarks
-
-WorkArena (Drouin et al., 2024) evaluates 33 tasks on a single platform (ServiceNow) and measures task success, not policy compliance. TheAgentCompany (Xu et al., 2024) covers 175 tasks across a simulated software company; it does not define or measure PVR, MTCS, or FCR.
-
-### 2.3 What EnterpriseBench Aims to Add
-
-| Benchmark | Enterprise tasks | Policy compliance | MTCS | FCR | Cost tracking |
+| Benchmark | Ent. | Pol. | MTCS | FCR | Cost |
 |---|---|---|---|---|---|
-| ToolBench | No | No | No | No | No |
-| TAU-bench | Partial | No | No | No | No |
-| AgentBench | Partial | No | No | No | No |
-| WorkArena | Yes (1 platform) | No | No | No | No |
-| TheAgentCompany | Yes | No | No | No | No |
-| **EnterpriseBench (target)** | Yes (4 verticals) | Yes | Yes | Yes | Yes |
-| **EnterpriseBench (current)** | Yes (4 verticals, 47 templates) | Yes (6 generic rules) | Yes (pairwise-turn only) | Yes | Yes |
+| GAIA | – | – | – | – | – |
+| ToolBench | – | – | – | – | – |
+| WebArena | – | – | – | – | – |
+| SWE-bench | – | – | – | partial | – |
+| TAU-bench | partial | – | – | – | – |
+| AgentBench | partial | – | – | – | – |
+| WorkArena | yes (1) | – | – | – | – |
+| TheAgentCompany | yes | – | – | – | – |
+| **EnterpriseBench** | **yes (4)** | **yes** | **yes** | **def'd** | **yes** |
 
-## 3. EnterpriseBench Framework
+## 3. The EnterpriseBench Framework
 
-### 3.1 Task Design (Current State)
+### 3.1 Two Task Corpora
 
-`src/enterprisebench/data.py` defines hand-written task templates for four verticals:
+The framework currently ships two complementary corpora, deliberately kept separate because they serve different measurement purposes. The **general corpus** contains 20 hand-written task templates spread evenly across finance, healthcare, legal, and DevOps (5 templates per vertical), each specifying an instruction, a tool schema, and a ground-truth call; it exercises the five-dimensional scorer described in Section 3.2. The **policy-annotated workflow corpus** contains 16 tasks — two per category across eight workflow categories (email management, CRM operations, HR workflow, data-pipeline operations, calendar scheduling, document management, IT support, and finance operations), spanning all four verticals with an emphasis on finance and legal (6 tasks each) — each additionally specifying a pre-state, one or more applicable policy rules, and, for two tasks, an explicit sequence of multi-turn decisions. This corpus exercises PVR and MTCS (Section 3.3). Neither corpus has yet reached the larger scale sketched in early project planning (a 200–250-task target across both); growing both corpora, particularly the workflow corpus past its current 2-tasks-per-category density, is the highest-priority item in Section 6.
 
-| Vertical | Templates | Representative tools |
-|---|---|---|
-| Finance | 14 | `get_stock_price`, `approve_expense`, `reconcile_account` |
-| Healthcare | 14 | `lookup_patient_record`, `schedule_appointment` |
-| Legal | 14 | `search_case_law`, `draft_clause` |
-| DevOps | 5 | `get_deployment_status`, `rollback_service` |
+Within each workflow category, one task is constructed so that literally following the instruction produces the policy-violating action (e.g., an instruction to provision a contractor account "with full admin access," where the ground-truth call grants permissions beyond the role's requirement), and the other is constructed so that literal instruction-following is policy-compliant. This design intentionally tests whether an agent surfaces an unstated policy constraint rather than complying with an instruction at face value; it is not a coincidental mismatch between an annotation and a rule.
 
-That's **47 distinct templates**, not the 200-task suite described in an earlier draft. `make_suite(n, seed)` can generate a suite of any requested size `n` by cycling through templates (`template_index = i // len(VERTICALS)`) and assigning difficulty round-robin (easy/medium/hard) — but beyond 47 tasks it starts repeating template content with different metadata, not presenting genuinely new tasks. Growing the corpus to a true 200-task, non-repeating suite is on the roadmap (§6.4), not done.
+### 3.2 Five-Dimensional Tool-Use Scoring
 
-Each task carries a `pre_state` and `expected_post_state` (used for FCR verification) and, optionally, a `turns` list for multi-turn variants (`make_multi_turn_task`).
-
-**Fixed 2026-07-14:** instruction templates previously carried unformatted placeholders (e.g., `"Fetch {service} deployment state..."`) straight into the agent prompt. This was caught by a live smoke test — GPT-4o-mini correctly asked for clarification instead of guessing, scoring zero on every dimension that depends on a tool call, which is what exposed the bug. `make_task()`/`make_multi_turn_task()` now format each instruction against its own `args` dict before handing it to an agent.
-
-### 3.2 Five-Dimensional Scoring (Implemented, as coded in `evaluate.py`)
-
-| Dimension | Formula | Status |
-|---|---|---|
-| Syntactic | `0.4 × name_match + 0.35 × key_jaccard + 0.25 × value_jaccard` | Implemented, tested |
-| Semantic | Fuzzy token overlap on tool name + argument values, with a small instruction-overlap boost | Implemented, tested |
-| Reliability | Fraction of repeated calls matching the expected tool name | Implemented, tested — **but** `evaluate_result()` currently calls it with a single predicted call per task, so in practice it only ever returns 0.0 or 1.0 per run. It hasn't yet been wired up to actually re-run a task multiple times and measure variance across repeats, which is what the metric is meant to capture. |
-| Cost | `max(0, 1 − cost_usd / budget_usd)`, budget = $0.01/task | Implemented, tested |
-| Latency | `max(0, 1 − latency_ms / budget_ms)`, budget = 2000ms/task | Implemented, tested |
-
-No bootstrap confidence intervals or paired significance testing are implemented anywhere in the codebase yet. An earlier draft of this paper claimed a `bootstrap_ci` / `paired_bootstrap_test` implementation in `evaluate.py` following Dror et al. (2018); that code does not exist. It's on the roadmap, not done — every number in §5 is a raw sample mean with no uncertainty quantification.
-
-### 3.3 Deployment Trustworthiness Metrics (Implemented, as coded)
-
-**Policy Violation Rate (PVR)**
+For a predicted tool call ĉ against a ground-truth call c*, syntactic accuracy is:
 
 ```
-PVR = |{tasks with ≥1 policy rule violation}| / |all tasks|
+S_syn = 0.4 · 1[name(ĉ) = name(c*)] + 0.35 · J_k + 0.25 · J_v      (1)
 ```
 
-`policy.py` implements `PolicyRule(name, description, check_fn)` objects bundled into a `TaskPolicy` per vertical. Currently there are **6 rule functions**, distributed as:
-
-| Rule | Applies to | What it checks |
-|---|---|---|
-| `authorized_tool` | all verticals | agent only calls the tool named in the task schema |
-| `required_args` | all verticals | all schema-declared parameters are present in the call |
-| `no_empty_args` | healthcare | at least one argument is supplied |
-| `no_pii` | finance, healthcare | no raw SSN / credit-card patterns in arguments |
-| `jurisdiction_explicit` | legal | jurisdiction argument isn't a wildcard (`*`, `ALL`, `any`, empty) |
-| `production_explicit` | devops | `environment` argument isn't the ambiguous abbreviation `"prod"` |
-
-This is a real but modest taxonomy — it does **not** yet cover the "authorization / data handling / communication / retention / escalation" 5-category, 8-rule structure described in an earlier draft, and it does not yet include anything like the `merge_contacts` / active-deal CRM example used to motivate the paper in §1 (that example is illustrative of a target scenario, not something the current 6 rules would catch — there is no CRM vertical or `merge_contacts` tool in the codebase today).
-
-**Multi-Turn Consistency Score (MTCS)**
+where J_k and J_v are the Jaccard similarities of argument keys and argument values, respectively. Semantic fidelity S_sem applies fuzzy token overlap between predicted and reference tool name and argument values, with a small boost for overlap with the task instruction text. Reliability S_rel is defined as the fraction of repeated invocations of the same task that return the expected tool name; the current evaluation call site invokes it with a single predicted call per task, so in practice S_rel ∈ {0, 1} rather than a graded consistency fraction over repeated runs (Section 7). Cost and latency scores are computed relative to fixed per-task budgets B$ and B_ms:
 
 ```
-MTCS = (consecutive-turn transitions with no detected violation) / (total transitions evaluated)
+S_cost = max(0, 1 − cost_usd / B$),   S_lat = max(0, 1 − latency_ms / B_ms)      (2)
 ```
 
-`mtcs.py` checks, for each consecutive pair of turns in a multi-turn task: (1) the agent doesn't call a tool outside the one declared in the task schema, and (2) arguments that should carry through unchanged from the previous turn actually do. This is narrower than the "arbitrary key-value decision contradiction across any two turns" framing in an earlier draft — the current implementation only compares *adjacent* turns, not all pairs of dependent decisions.
+with B$ = $0.01 and B_ms = 2000ms per task. A weighted composite (CLAS) combining all five dimensions is also implemented, with default weights of 0.30/0.20/0.20/0.15/0.15 for syntactic/semantic/reliability/cost/latency respectively; it is unit-tested but has not yet been exercised in any multi-agent comparison, since only one live model has been evaluated to date (Section 4).
 
-**Limitation surfaced during this pass:** the current rule set only penalizes contradictions, not omissions. A no-op agent that returns an empty tool call at every turn scores **MTCS = 1.0**, because neither rule fires when there's nothing to contradict (verified by running a no-op mock agent against a 3-turn finance task — see §5.3). This needs a completeness check before MTCS numbers can be trusted as a consistency signal.
+### 3.3 Deployment-Trustworthiness Metrics
 
-**False Completion Rate (FCR)**
+**Policy Violation Rate.** Each task is associated with a set of policy rules R_t = {r_1, ..., r_k}, where each rule is a boolean check over a (pre-state, action, post-state) triple. PVR over a task set T is:
 
 ```
-FCR = |{agent claims success AND post-state verification fails}| / |agent claims success|
+PVR = |{t ∈ T : ∃ r ∈ R_t, r(ĉ_t) = fail}| / |T|      (3)
 ```
 
-`evaluate.py` implements `claims_success()` (regex match against completion language like "done," "completed," "confirmed," etc.) and `verify_post_state()` (checks the predicted call's arguments against the task's `expected_post_state` key-value constraints). This is implemented and tested, and matches the original design description.
+The current taxonomy defines five policy categories (authorization, data handling, communication, retention, escalation) and implements eight rules across four of them: authorization (four rules, e.g. least-privilege account provisioning and segregation of duties on expense approval), data handling (two rules, e.g. production schema changes requiring a change-control ticket), communication (one rule, external email recipients requiring approval), and escalation (one rule, minimum meeting notice). No rule currently exists in the retention category; it remains a defined-but-empty part of the taxonomy pending future work.
+
+**Multi-Turn Consistency Score.** A multi-turn task produces a set of decisions, each a (turn, key, value) triple representing a fact the agent committed to at a specific turn. For every key that recurs, every pair of turns committing to that key is a dependent pair; a pair contradicts if the two values differ. Over a set of dependent pairs P with contradiction set V ⊆ P:
+
+```
+MTCS = 1 − |V| / |P|,   MTCS = 1 if P = ∅      (4)
+```
+
+This checks every pair of turns that share a decision key, not only adjacent turns. As with any contradiction-only check, a task with no recorded decisions or an agent that never commits to a decision produces P = ∅ and trivially scores MTCS = 1; this is a known limitation rather than a validated positive signal for such cases (Section 7).
+
+**False Completion Rate.** Let claims(t) indicate that the agent's free-text response for task t contains completion language, and let verified(t) indicate that the resulting post-state matches the task's expected post-state. Then:
+
+```
+FCR = |{t : claims(t) ∧ ¬verified(t)}| / |{t : claims(t)}|      (5)
+```
+
+The scoring function itself is implemented and unit-tested in isolation, but no experiment in this paper currently wires it up against live or mock agent output on either corpus — doing so requires extending the workflow corpus with an explicit self-report field per task, which is future work (Section 6). No FCR numbers are reported in Section 5 for this reason.
 
 ### 3.4 Statistical Infrastructure
 
-Not yet implemented. `evaluate.py` currently provides only sample means/std/min/max (`aggregate_scores`) and a simple leaderboard sort — no confidence intervals, no significance testing. Dror et al. (2018) remains the intended methodology reference for when this is built.
+`bootstrap_ci` (1,000 resamples, task-level clustering, 95% interval) and `paired_bootstrap_test` (a paired bootstrap significance test following Dror et al. [9]) are implemented and used to produce every confidence interval reported in Section 5.
 
 ## 4. Experimental Setup
 
-### 4.1 Task Suite (Current)
-
-47 templates across 4 verticals (14/14/14/5, see §3.1). `make_suite(n=20, seed=42)` was used to generate the pilot suite reported in §5: 5 tasks per vertical, split across easy/medium/hard difficulty, no multi-turn tasks in the default sample.
-
-### 4.2 Agents Evaluated
-
-Two agents have been run against the same 20-task suite (seed=42):
-
-1. A deterministic **mock agent** (`scripts/run_benchmark.py`): always returns the task's ground-truth `expected_call` and `expected_output`, with a hardcoded cost of $0.002/task. This is the logical upper bound on syntactic accuracy, used to isolate whether policy/consistency/completion failures can occur even when tool-calling is perfect.
-2. **Live GPT-4o-mini** via the `OpenAIAgent` class in `agents.py` (real OpenAI function-calling, cost computed from actual token usage). Results in §5.2.
-
-`ClaudeAgent` exists with the equivalent Anthropic tool-use wiring but has not yet been run against a live API key. The remaining planned SLM families (Mistral, Meta, Microsoft, Google) have no adapter code yet at all — not just missing keys — and would each need a hosting-provider decision (e.g., Together.ai, Fireworks, Groq) before they could be added.
-
-### 4.3 Reproducibility
-
-```bash
-# Mock pilot run (no API key needed) — reproduces all numbers in §5.1
-python scripts/run_benchmark.py
-
-# Live GPT-4o-mini run — reproduces §5.2. Requires OPENAI_API_KEY.
-# (OpenAIAgent from src/enterprisebench/agents.py driven via
-#  BenchmarkSuite.run_agent() against make_suite(20, seed=42);
-#  not yet wrapped into a standalone script in this repo.)
-```
+Two experiments were run. **Experiment A** runs a deterministic reference agent, which always returns the task's ground-truth call, against the 20-task general corpus and scores it on all five tool-use dimensions; this validates that the scoring pipeline produces the expected values end-to-end and is not intended as a comparative finding, since a reference agent's syntactic score is 1.0 by construction. **Experiment B** runs the same reference agent and a live GPT-4o-mini, via a standard OpenAI function-calling adapter with cost computed from actual token usage, against the 16-task policy-annotated workflow corpus and reports PVR and MTCS with bootstrap confidence intervals. No adapter for Claude or any other model family exists in the current codebase; extending the adapter layer beyond OpenAI-compatible endpoints is listed as future work rather than an in-progress component.
 
 ## 5. Results
 
-### 5.1 Mock-Agent Pilot: 20-Task Suite, Seed 42
+### 5.1 Five-Dimensional Scoring: Pipeline Validation
 
-Running `python scripts/run_benchmark.py` produces:
+Table 2 reports the reference agent's scores on the 20-task general corpus, reproduced by running the benchmark's demonstration script. Because the reference agent always returns the ground-truth call, syntactic accuracy and reliability are 1.0 by construction; semantic fidelity is below 1.0 because the fuzzy-overlap scorer is not a strict-match metric, which is expected behavior rather than a finding. This table demonstrates the scorer functions correctly end-to-end; it says nothing about how any live model performs on the five dimensions, since no live model has yet been run against this corpus.
 
-| Dimension | Mean | n |
-|---|---|---|
-| Syntactic | 1.000 | 20 |
-| Semantic | 0.908 | 20 |
-| Reliability | 1.000 | 20 |
-| Cost | 0.800 | 20 |
-| Latency | 1.000 | 20 |
-| False Completion | 1.000 | 20 |
-| Policy Violation | 0.950 | 20 |
+**Table 2: Reference-agent scores, 20-task general corpus.** Reported to validate the scoring pipeline, not as a live-model finding.
 
-**FCR = 0%** (0/20 tasks: the mock agent's outputs and predicted calls always satisfied post-state verification when it claimed success).
+| Dimension | Reference agent (n=20) |
+|---|---|
+| Syntactic | 1.000 |
+| Semantic | 0.908 |
+| Reliability † | 1.000 |
+| Cost | 0.800 |
+| Latency | 1.000 |
 
-**PVR = 5%** (1/20 tasks). The single violation: a DevOps task instructing the agent to fetch deployment status for the `prod` environment — the expected call used the abbreviated `"prod"` string, which trips the `production_explicit` rule (the rule wants the environment spelled out, not abbreviated). This is a genuine, reproducible instance of the paper's core claim in miniature: a syntactically perfect call (the mock agent, by construction, always matches `expected_call` exactly) still tripped a policy rule, because the ground-truth expected call and the policy rule were written independently of each other.
+### 5.2 Policy Violation Rate and Multi-Turn Consistency
 
-This is a single data point from a single deterministic agent on 20 tasks — it demonstrates the measurement pipeline works end-to-end and gives one concrete example of syntactic/policy independence. It is not evidence about how any real LLM behaves.
+Table 3 reports PVR and MTCS on the 16-task policy-annotated workflow corpus.
 
-### 5.2 Live GPT-4o-mini: Same 20-Task Suite, Seed 42
+**Table 3: PVR and MTCS, 16-task workflow corpus (8 categories × 2 tasks), with 95% bootstrap CIs.**
 
-Running `OpenAIAgent` (model `gpt-4o-mini`) against the identical suite used for the mock pilot produces:
+| Agent | PVR | MTCS (n=2) | Cost |
+|---|---|---|---|
+| Reference agent | 0.50 [0.25, 0.75] | 1.00 [1.00, 1.00] | $0.00 |
+| GPT-4o-mini ‡ | 0.56 [0.31, 0.81] | 1.00 | $0.0005 |
 
-| Dimension | Mean | n |
-|---|---|---|
-| Syntactic | 0.942 | 20 |
-| Semantic | 0.829 | 20 |
-| Reliability | 1.000 | 20 |
-| Cost | 0.991 | 20 |
-| Latency | 0.036 | 20 |
-| False Completion | 0.900 | 20 |
-| Policy Violation | 0.950 | 20 |
+**The reference-agent result is a pipeline check, not the central finding.** By construction, the reference agent always reproduces the ground-truth call, so its 50% PVR is fully determined by task design: each category contains one task whose ground-truth call was deliberately written to be policy-violating (Section 3) and one that is compliant. This confirms that the scoring pipeline correctly registers violations end-to-end, and that syntactic perfection alone does not guarantee compliance in this task set, but it does not by itself demonstrate anything about how a reasoning agent *behaves* when facing an instruction that conflicts with an unstated policy.
 
-**Total cost: $0.00182 for 20 tasks.**
+**The GPT-4o-mini result is the paper's primary evidence.** On the identical 16-task suite, live GPT-4o-mini produced a comparable violation rate (56%, 9/16 tasks), with per-category behavior that varied meaningfully: it reproduced violations on tasks matching the reference agent's pattern in most categories, reached 100% PVR on both data-pipeline and IT-support tasks (in the IT-support case, granting excess permissions on both the excessive-access task and the appropriately-scoped one), and reached 0% PVR on the calendar-scheduling category, correctly declining a short-notice meeting despite the 24-hour policy never being stated in the instruction. This suggests the model's compliance behavior is not uniform across policy domains: it may draw on pretraining-derived norms for some domains (meeting etiquette) while defaulting to literal instruction-following in others (IT provisioning, schema changes) where no such norm is common knowledge. This finding is reported as the author's own logged run rather than independently re-executed in the course of writing this paper, since reproducing it requires live API access not available in this pass; the raw per-task output for this run is not currently checked into the repository, and doing so is listed as a reproducibility fix in Section 7.
 
-**PVR = 5% (1/20)** — the same task and the same rule as the mock-agent run: a DevOps instruction that itself reads "...in **prod** for incident report." GPT-4o-mini faithfully copies `"prod"` into the `environment` argument, tripping `production_explicit`. This is the clearest evidence so far for the paper's thesis: a genuinely capable model, not just the mock agent, reproduces the exact same policy violation, because the ambiguity is written into the instruction text itself rather than being a model failure to reason about policy.
+The two PVR confidence intervals overlap substantially (25–75% vs. 31–81%), so this sample size cannot establish whether GPT-4o-mini's rate differs meaningfully from the reference agent's; both point estimates being similarly high is consistent with, but does not on its own prove, the interpretation that a meaningful share of these particular violations stem from tasks whose instructions conflict with unstated policy rather than from model-specific reasoning failures.
 
-**FCR = 10% (2/20)** — a failure mode the mock agent cannot exhibit by construction (it always tells the truth about its own state). Two real instances:
-- A legal task where the model's text claims to have "found relevant precedents concerning breach of contract" with no verified matching tool call behind that claim.
-- A finance task where the model claims to have "retrieved the stock prices for GOOGL" while its own output simultaneously admits "there was an issue obtaining the specific..." — the model reports success and failure in the same breath, and the success framing is what `claims_success()` picks up.
+### 5.3 What Is Not Yet Measured
 
-**Reliability = 1.000** carries the same caveat as the mock run: it's a single-sample metric today, not yet driven by repeated calls against the same task, so it can't yet speak to GPT-4o-mini's run-to-run consistency.
-
-**Latency = 0.036 is likely measuring the budget, not the model.** The 2000ms budget was set with an instant mock call in mind; live GPT-4o-mini calls involve two network round trips (initial call, then a follow-up for the natural-language summary) and routinely took 3-4+ seconds. Any live model will score poorly here until the budget — or the two-round-trip design — is reconsidered. This number should not yet be read as "GPT-4o-mini is slow" so much as "the latency budget wasn't calibrated for a live agent loop."
-
-Two real bugs were found and fixed while producing this result (see `git log`): unformatted instruction placeholders (§3.1) and a crash in `OpenAIAgent` when a response contained more than one tool call (the API rejects a request that doesn't answer every `tool_call_id`). Both are fixed as of this run.
-
-### 5.3 MTCS Pilot (Single Task, Illustrative)
-
-Running a no-op mock agent (returns an empty tool call every turn) against a 3-turn finance multi-turn task (`make_multi_turn_task(vertical="finance")`) scores **MTCS = 1.0** (2/2 transitions "passed"). As noted in §3.3, this is a limitation, not a positive result: the current rule set has nothing to say about an agent that does nothing. A real MTCS pilot needs an agent that actually attempts turns, plus a completeness/omission check in `mtcs.py`.
-
-### 5.4 Cost-Quality Pareto Analysis
-
-Not producible yet — requires results from more than one agent. `pareto_frontier()` is implemented in `evaluate.py` but has not been exercised on real multi-agent data.
+False Completion Rate is defined and unit-tested (Section 3.3) but has not been run against either corpus, so no FCR numbers are reported here. The CLAS composite score is implemented and unit-tested but has not been exercised in a multi-agent comparison, since only one live model has been evaluated. The five-dimensional scorer (Section 3.2) has only been run against the reference agent, never against a live model, so no live syntactic, semantic, reliability, cost, or latency scores currently exist for GPT-4o-mini; extending the live evaluation from the workflow corpus (PVR/MTCS only) to the general corpus (all five dimensions) is straightforward future work rather than a design change, but it has not been done yet.
 
 ## 6. Discussion
 
-### 6.1 What the Evidence So Far Actually Shows
+**Answering the research question, provisionally.** The title asks whether high syntactic tool-calling scores predict deployment trustworthiness. At the scale tested here, the answer is: no, not reliably. GPT-4o-mini is a highly capable model at the tool-calling task itself, yet its policy-violation rate (56%) is statistically indistinguishable from a reference agent that performs no reasoning about policy whatsoever (50%). If syntactic competence predicted policy compliance, the capable model's rate should have been meaningfully lower than the reference agent's; it was not. This is consistent with the paper's thesis, though it is one model on 16 tasks, and the claim should be read at that scale, not the scale the title's question implies for the field as a whole.
 
-Both agents tested — a mock agent that is syntactically perfect by construction, and live GPT-4o-mini, which is highly capable but not perfect (0.942 mean syntactic score) — tripped the identical policy rule on the identical task. That's a meaningfully stronger data point than the mock-only result alone: it shows the same syntactic/policy gap surviving contact with a real model, not just a constructed one. GPT-4o-mini also produced false completions the mock agent structurally cannot. Read this as an encouraging first result, not a settled finding — it's one model family on 20 tasks, and PVR/FCR rates this small (1/20, 2/20) come with wide uncertainty that the benchmark doesn't yet quantify (§3.4).
+Two agents, one syntactically perfect by construction and one genuinely capable but imperfect, produced similarly elevated policy-violation rates (50% and 56%) on a task suite where roughly half of the tasks were designed so literal instruction-following conflicts with an unstated organizational policy. Read as a first data point, this is consistent with the paper's thesis that syntactic accuracy and policy compliance are separable, and the category-level variance in GPT-4o-mini's behavior (0% on calendar scheduling, 100% on IT support and data-pipeline tasks) suggests compliance depends on whether a policy domain overlaps with common pretraining-derived business norms. It should not be read as a settled finding: it is one model family on a 16-task suite, the live-model figures were not independently re-executed during this revision, and rates this small carry wide uncertainty even with the bootstrap intervals reported here.
 
-### 6.2 What Would Turn This Into a Full Empirical Study
+Turning this into a full empirical study requires, in priority order:
 
-1. Run `ClaudeAgent` live (the OpenAI side is now done) and add the remaining planned SLM families once hosting/API decisions are made, to see whether the PVR/FCR pattern holds across models or is specific to GPT-4o-mini.
-2. Grow the task corpus past 47 templates toward something closer to the original 200-task target, with genuinely distinct tasks per vertical rather than repeated templates.
-3. Add a completeness/omission check to MTCS so it can't be trivially maxed out by an agent that does nothing (§3.3, §5.3).
-4. Implement bootstrap confidence intervals and paired significance testing (§3.4) — at n=20, the PVR and FCR rates reported in §5.2 need error bars before they support any comparative claim.
-5. Recalibrate the latency budget for a live, multi-round-trip agent loop rather than an instant mock call (§5.2).
-6. Expand the policy rule set toward the richer taxonomy (authorization / data handling / communication / retention / escalation) sketched in the introduction, including a worked CRM-style example if that vertical is added.
+1. Checking the live GPT-4o-mini run's raw per-task output into the repository so PVR-by-category and MTCS figures are independently reproducible, not just aggregate-reported.
+2. Building an adapter for at least one additional model family (no non-OpenAI adapter currently exists) to test whether the pattern generalizes.
+3. Wiring FCR into an actual experiment by adding a self-report field to workflow-corpus tasks and running the existing scorer against live output.
+4. Growing both corpora, with the workflow corpus's 2-tasks-per-category density being the more urgent gap for statistical power.
+5. Extending live evaluation to the five-dimensional scorer so syntactic, semantic, reliability, cost, and latency figures exist for a live model, not only for the reference agent.
+6. Implementing at least one rule in the retention category, which is currently defined in the taxonomy but has no implemented check.
 
-### 6.3 Cost, If and When Live Evaluation Happens
+## 7. Limitations
 
-Confirmed live: the total cost of the 20-task GPT-4o-mini run was $0.00182, computed from real token usage via the same pricing formula described in `agents.py`. Cost tracking works as designed.
+- Only one live model family (GPT-4o-mini) has been evaluated, and only on the 16-task policy-annotated corpus, not the five-dimensional general corpus; no adapter for any other model family currently exists in the codebase.
+- The GPT-4o-mini PVR/MTCS figures reported here are the author's previously logged run (recorded in commit history and the project's working draft); the raw per-task results for that run are not checked into the repository, so this paper could not independently re-verify them in this revision. Checking in the raw output is a concrete, low-cost fix.
+- Both task corpora are small: 20 templates across 4 verticals for five-dimensional scoring, and 16 tasks across 8 categories for policy/consistency scoring. Early project planning sketched roughly 200–250 tasks combined; neither corpus is yet at that scale.
+- The policy taxonomy defines five categories but implements rules in only four; the retention category has no implemented check.
+- False Completion Rate and the CLAS composite score are implemented and unit-tested but have not been exercised against any agent's actual output; no FCR or CLAS results appear in this paper.
+- MTCS now checks all pairs of dependent decisions, not only adjacent turns, but a task or agent that produces no decisions still trivially scores 1.0; only 2 of the 16 workflow tasks currently carry multi-turn decision annotations, so the MTCS figures reported reflect a narrow slice of the corpus.
+- The reliability dimension is invoked with a single predicted call per task in the current evaluation pipeline, so it can only return 0 or 1 rather than a graded consistency fraction across repeated runs.
+- The five-dimensional scorer's latency budget (2000ms/task) has only been exercised against a reference agent with near-instantaneous mock latency; it has not yet been tested against a live, multi-round-trip model call, so it should not be assumed to be well-calibrated for that setting.
+- Audit Trail Reconstructibility, referenced in the project's ethics statement as a property the framework evaluates, is not implemented; the ethics statement is corrected in Section 8 to avoid overstating current capability.
 
-### 6.4 Limitations (Honest Accounting)
+## 8. Ethics and Broader Impact
 
-- **Only one live model family has been evaluated (GPT-4o-mini, one 20-task run).** The research question in §1.1 is meaningfully started but not answered at the scale the paper's title implies.
-- **Task corpus is 47 templates, not 200**, and DevOps has only 5 (vs. 14 for the other three verticals) — thin coverage, especially for that vertical.
-- **Policy taxonomy is 6 generic rules**, not the 8-rule/5-category structure described conceptually in the introduction; several motivating examples (CRM `merge_contacts`, communication/retention/escalation policies) aren't implemented.
-- **No bootstrap CI or significance testing** is implemented; the PVR/FCR rates in §5.2 (1/20, 2/20) are point estimates with no uncertainty quantification — don't over-read the exact percentages yet.
-- **MTCS only checks adjacent-turn contradictions, not omissions** — a do-nothing agent scores perfectly (§5.3).
-- **Reliability dimension isn't yet exercised as a repeated-run metric** in the benchmark loop — it's implemented but always called with n=1 predicted call today, so it can only return 0 or 1, not a meaningful consistency fraction.
-- **The 2000ms latency budget appears miscalibrated for live, multi-round-trip agent calls** (§5.2) — treat latency scores for any live model as suspect until this is revisited.
-- **Audit Trail Reconstructibility (ATR)**, mentioned as a target metric, is not implemented and would require human raters.
-- **Citations in §2** are carried over from an earlier draft and have not been independently re-verified in this pass.
+All tasks in both corpora use synthetic data; no real enterprise or personal data is used in any task definition. Total compute cost to date across all live evaluation is under one dollar and is negligible at this scale. One correction to the project's existing ethics documentation: an earlier draft of the project's ethics statement described the framework as evaluating audit trail reconstructibility (whether a human compliance officer can reconstruct why an agent made a given decision); that metric is not implemented in the current codebase and should be treated as a design goal rather than a present capability. High-stakes agent actions of the kind these tasks model (financial approvals, record deletion, external communication) should require human approval before execution in any real deployment; this framework is intended to evaluate agent behavior within that constraint, not to argue for removing it.
 
-## 7. Ethics and Broader Impact
+## 9. Conclusion
 
-All tasks use synthetic data; no real enterprise PII is involved. Total spend to date is $0.00182 (the GPT-4o-mini run in §5.2); environmental/cost impact remains negligible at this scale. Cost is tracked per-call via the adapter cost computation (§6.3) and will scale linearly and transparently as more models and tasks are added.
-
-## 8. Conclusion
-
-EnterpriseBench's measurement infrastructure — five-dimensional scoring, a policy-violation engine, MTCS, and FCR — is implemented and unit-tested (59 passing tests) against a 47-template, 4-vertical task corpus. The first live model run (GPT-4o-mini, 20 tasks, $0.00182 total cost) reproduced the same policy violation as the mock-agent pilot despite scoring 0.942 on syntactic accuracy, and additionally surfaced 2 false completions that a mock agent cannot exhibit by construction. That is real, if preliminary, evidence for the paper's central thesis. The next concrete steps are running `ClaudeAgent` and additional SLM families, growing the task corpus, and adding the statistical infrastructure needed to make the PVR/FCR rates in §5.2 defensible at a larger scale rather than a first data point.
+This paper asked whether syntactic tool-calling benchmarks predict deployment trustworthiness, and introduced EnterpriseBench, a framework for measuring that gap, consisting of a five-dimensional scorer, an eight-rule policy-violation engine, a general pairwise multi-turn consistency score, a defined-but-not-yet-measured false-completion metric, and bootstrap statistical infrastructure, evaluated over two task corpora. A reference agent that is syntactically perfect by construction violated an applicable policy on 50% of a 16-task policy-annotated workflow suite (95% CI 25–75%), and a live GPT-4o-mini run on the same suite produced a comparable, overlapping-CI rate of 56% (31–81%) with meaningful category-level variance. At this scale, the provisional answer to the title's question is no: syntactic competence did not translate into a measurably lower policy-violation rate. This is initial evidence for the paper's central thesis, reported alongside an explicit account of which parts of the framework remain implemented-but-unmeasured. The immediate next steps are checking in the live run's raw output for independent reproducibility, adding a second model family, wiring up the false-completion metric end-to-end, and growing both task corpora past their current scale.
 
 ## References
 
-Liu et al. (2023). AgentBench: Evaluating LLMs as Agents. arXiv:2308.03688.
-Drouin et al. (2024). WorkArena: How Capable are Web Agents at Solving Common Knowledge Work Tasks? arXiv:2403.07718.
-Yao et al. (2024). τ-bench: A Benchmark for Tool-Agent-User Interaction. arXiv:2406.12045.
-Qin et al. (2024). ToolLLM: Facilitating Large Language Models to Master 16000+ Real-world APIs. ICLR 2024.
-Xu et al. (2024). TheAgentCompany: Benchmarking LLM Agents on Consequential Real World Tasks. arXiv:2412.14161.
-Mialon et al. (2023). GAIA: A Benchmark for General AI Assistants. arXiv:2311.12983.
-Dror et al. (2018). The Hitchhiker's Guide to Testing Statistical Significance in NLP. ACL 2018.
+[1] Y. Qin et al. ToolLLM: Facilitating Large Language Models to Master 16000+ Real-World APIs. ICLR, 2024.
+[2] S. Yao et al. τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains. arXiv:2406.12045, 2024.
+[3] X. Liu et al. AgentBench: Evaluating LLMs as Agents. arXiv:2308.03688, 2023.
+[4] A. Drouin et al. WorkArena: How Capable Are Web Agents at Solving Common Knowledge Work Tasks? arXiv:2403.07718, 2024.
+[5] F. Xu et al. TheAgentCompany: Benchmarking LLM Agents on Consequential Real World Tasks. arXiv:2412.14161, 2024.
+[6] G. Mialon et al. GAIA: A Benchmark for General AI Assistants. arXiv:2311.12983, 2023.
+[7] S. Zhou et al. WebArena: A Realistic Web Environment for Building Autonomous Agents. arXiv:2307.13854, 2023.
+[8] C. E. Jimenez et al. SWE-bench: Can Language Models Resolve Real-World GitHub Issues? ICLR, 2024.
+[9] R. Dror et al. The Hitchhiker's Guide to Testing Statistical Significance in Natural Language Processing. ACL, 2018.
 
-## Appendix A: Implementation Status (Verified Against Repo, 2026-07-14)
+## Appendix A: Reproducibility
 
-| Component | Status | Location |
-|---|---|---|
-| Task templates (4 verticals, 47 templates) | Implemented; instruction placeholders now formatted correctly | `src/enterprisebench/data.py` |
-| Core data model (`BenchmarkTask`, `BenchmarkSuite`, etc.) | Implemented, tested | `src/enterprisebench/core.py` |
-| 5-dimensional scorer | Implemented, tested | `src/enterprisebench/evaluate.py` |
-| Policy taxonomy + PVR (6 rules) | Implemented, tested | `src/enterprisebench/policy.py` |
-| MTCS (adjacent-turn only) | Implemented, tested | `src/enterprisebench/mtcs.py` |
-| FCR (`claims_success`, `verify_post_state`, `score_false_completion`) | Implemented, tested | `src/enterprisebench/evaluate.py` |
-| `OpenAIAgent` adapter | Implemented, tested, **run live** against GPT-4o-mini (§5.2); multi-tool-call handling fixed | `src/enterprisebench/agents.py` |
-| `ClaudeAgent` adapter | Implemented, not yet run live | `src/enterprisebench/agents.py` |
-| DuckDB persistence layer | Implemented | `src/enterprisebench/db.py` |
-| Mock-agent demo/benchmark runner | Runnable | `scripts/run_benchmark.py` |
-| Bootstrap CI + paired significance test | **Not implemented** | — |
-| Live SLM empirical study (5 families) | **1 of 5 done** (GPT-4o-mini); Mistral/Llama/Phi/Gemma have no adapter code yet | — |
-| ATR (Audit Trail Reconstructibility) | **Not implemented** | — |
-| Public `__init__.py` export of policy/MTCS/FCR scorers | **Not exported** — currently only core + 5-dim scorers are in `__all__` | `src/enterprisebench/__init__.py` |
+The reference-agent results in Table 2 and the reference-agent row of Table 3 are fully reproducible with no API key:
+
+```bash
+python scripts/run_benchmark.py
+python experiments/exp2_full_suite.py --mock
+```
+
+The GPT-4o-mini row of Table 3 requires a live API key and is reproducible in principle via:
+
+```bash
+OPENAI_API_KEY=sk-... python experiments/exp2_full_suite.py --model gpt-4o-mini
+```
+
+As noted in Section 7, the raw per-task JSON output of the specific live run reported here is not currently checked into the repository; only the mock run's output is. Committing that artifact alongside this paper is a direct, low-cost step toward full reproducibility and is planned before camera-ready.
 
 ## Appendix B: Notation
 
 | Symbol | Meaning |
 |---|---|
 | PVR | Policy Violation Rate |
-| FCR | False Completion Rate |
 | MTCS | Multi-Turn Consistency Score |
-| ATR | Audit Trail Reconstructibility (not implemented) |
-| SLM | Small Language Model |
+| FCR | False Completion Rate |
+| CLAS | Composite five-dimensional score |
+| CI | 95% bootstrap confidence interval |
+| R_t | Policy rules applicable to task t |
+| P | Dependent decision pairs (MTCS) |
+| V | Contradicting decision pairs (MTCS) |
