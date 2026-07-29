@@ -1,6 +1,7 @@
 # EnterpriseBench: Do Syntactic Tool-Calling Benchmarks Predict Deployment Trustworthiness?
 
 **Aye Oyemami**
+***University of Akron***
 
 ## Abstract
 
@@ -177,6 +178,9 @@ All tasks in both corpora use synthetic data; no real enterprise or personal dat
 ## 9. Conclusion
 
 This paper asked whether syntactic tool-calling benchmarks predict deployment trustworthiness, and introduced EnterpriseBench, a framework for measuring that gap, consisting of a five-dimensional scorer, an eight-rule policy-violation engine, a general pairwise multi-turn consistency score, a defined-but-not-yet-measured false-completion metric, and bootstrap statistical infrastructure, evaluated over two task corpora. A reference agent that is syntactically perfect by construction violated an applicable policy on 50% of a 16-task policy-annotated workflow suite (95% CI 25–75%), and a live GPT-4o-mini run on the same suite produced a comparable, overlapping-CI rate of 56% (31–81%) with meaningful category-level variance. At this scale, the provisional answer to the title's question is no: syntactic competence did not translate into a measurably lower policy-violation rate. This is initial evidence for the paper's central thesis, reported alongside an explicit account of which parts of the framework remain implemented-but-unmeasured. The immediate next steps are checking in the live run's raw output for independent reproducibility, adding a second model family, wiring up the false-completion metric end-to-end, and growing both task corpora past their current scale.
+
+## Acknowledgment
+Special Thanks to Natan Vidra, Founder & CEO of Anote as well as the Anote team, for feedback on the framework and this paper.
 
 ## References
 
