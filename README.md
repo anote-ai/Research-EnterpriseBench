@@ -6,7 +6,7 @@
 
 ## What this is
 
-EnterpriseBench is a benchmark for measuring whether LLM agents behave **safely and compliantly** on enterprise workflows — not just whether they complete tasks.
+EnterpriseBench is a benchmark for measuring whether LLM agents behave **safely and compliantly** on enterprise workflows, not just whether they complete tasks.
 
 Existing benchmarks (GAIA, AgentBench, WorkArena) ask "did the agent finish the task?" EnterpriseBench also asks:
 
@@ -100,11 +100,6 @@ print(result.violations[0].rule_id)  # 'CRM_POL_003'
 | **Reliability** | Consistency across repeated runs | 0–1 |
 | **Cost** | Normalized cost relative to per-task budget | 0–1 |
 | **Latency** | Normalized latency relative to response budget | 0–1 |
-
-## Target Venues
-
-- DAI 2026 (International Workshop on Deployable AI)
-- AAAI 2027 Workshop on Enterprise AI Evaluation
 
 ## Citation
 
